@@ -34,11 +34,33 @@ checker.py output feeds their Scorer.
 ## Keys / secrets
 - Stored in `keys.csv` (gitignored) — Groq (LLM) and Hindsight Cloud API keys.
 - Never commit `keys.csv`.
+- For Docker: copy `.env.example` to `.env` in the project root and fill in real values.
+  `.env` is gitignored too. `backend/config.py` reads real environment variables first
+  (how Docker/`.env` inject them) and falls back to `keys.csv` for local non-Docker dev.
+
+## Docker
+- `backend/Dockerfile` (python:3.12-slim, installs `requirements.txt`) +
+  root `docker-compose.yml` so teammates can run the backend without installing
+  Python/pip locally.
+- Verified end-to-end on 2026-09-28:
+  - `docker compose build` — image builds cleanly, all deps (`hindsight-client`, `groq`)
+    resolve and install with no conflicts.
+  - `docker compose run --rm backend` with no `.env` present — container still starts
+    (env file is marked `required: false` in `docker-compose.yml`) and the app itself
+    raises a clear `Missing API key(s): GROQ_API_KEY, HINDSIGHT_API_KEY` error instead of
+    Docker failing to start. Fixed after first attempt showed Compose hard-erroring when
+    `.env` didn't exist yet.
+  - `docker compose run --rm backend` with real keys passed as ephemeral `-e` env vars
+    (not written to disk) — full `hindsight_test.py` round trip succeeded inside the
+    container: retained a test memory and recalled it back correctly.
+  - Known cosmetic issue, not blocking: an "Unclosed client session" aiohttp warning
+    prints on exit — cleanup for the real client wrapper, not a correctness problem.
 
 ## Status
 - [x] Folder scaffolded
 - [x] Hindsight store/recall test memory working — see `backend/hindsight_test.py`
       (retain + recall round trip confirmed against real Hindsight Cloud API)
+- [x] Docker build + run verified end-to-end (see Docker section above)
 - [ ] Flow diagram received from user (pending — will drop in `flow.png` or similar)
 - [ ] Full backend coding starts tomorrow (need to close aiohttp session cleanly in
       the real client wrapper — currently prints an "unclosed client session" warning)

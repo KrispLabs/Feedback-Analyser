@@ -1,2 +1,5 @@
 hindsight-client
 groq
+pandas
+google-play-scraper
+kagglehub

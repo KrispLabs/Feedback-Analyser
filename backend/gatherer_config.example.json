@@ -1,0 +1,11 @@
+{
+  "business": "Spotify",
+  "own": [
+    {"type": "playstore", "app_id": "com.spotify.music", "limit": 200},
+    {"type": "appstore", "app_id": 324684580, "limit": 200}
+  ],
+  "market": [
+    {"type": "playstore", "app_id": "com.google.android.apps.youtube.music", "business": "YouTube Music", "limit": 100},
+    {"type": "playstore", "app_id": "com.gaana", "business": "Gaana", "limit": 100}
+  ]
+}

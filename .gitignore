@@ -1,0 +1,6 @@
+keys.csv
+.env
+node_modules/
+__pycache__/
+venv/
+*.pyc

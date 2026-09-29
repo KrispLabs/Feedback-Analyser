@@ -26,7 +26,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from analyse_shop import DEFAULT_LIMIT, analyse_shop
 from errors import PipelineError
+from memory import BANK_ID
 from run_week import run_week
+from scorer import SAMPLE_SIZE
 
 log = logging.getLogger("feedback.api")
 
@@ -82,8 +84,9 @@ class ShopRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    """Liveness check. Cheap, hits no external service."""
-    return {"status": "ok"}
+    """Liveness check. Cheap, hits no external service. Also reports the
+    settings the dashboard would otherwise have to hard-code."""
+    return {"status": "ok", "bank_id": BANK_ID, "sample_size": SAMPLE_SIZE}
 
 
 @app.post("/shops/analyse")

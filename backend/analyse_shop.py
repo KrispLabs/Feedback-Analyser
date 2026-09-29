@@ -174,10 +174,12 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
         # keyed by day as well as run number: re-running today replaces
         # today's memory, but API callers that leave run_number at its default
         # of 1 still build up history across days instead of overwriting it
+        result["stored"] = False  # true only once Hindsight has actually kept it
         if not store:
             say("      skipped (--no-store)")
         elif memory.store_week(run_number, result,
                                run_key=f"run:{run_number}:{date.today().isoformat()}"):
+            result["stored"] = True
             say(f"      stored   : run {run_number} -> bank {memory.bank_id!r}")
             say("      next run recalls this to spot trends ('worse than last time')")
         elif memory.error and not memory_failed_early:  # recall worked, the store failed

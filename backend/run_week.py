@@ -93,8 +93,8 @@ def run_week(week_number: int, business: str | None = None) -> dict:
             "themes": analyzed_themes,
             "warnings": [],
         }
-        memory.store_week(week_number, week_result,
-                          timestamp=datetime.fromisoformat(dates[0]).replace(tzinfo=timezone.utc))
+        week_result["stored"] = memory.store_week(week_number, week_result,
+                                                  timestamp=datetime.fromisoformat(dates[0]).replace(tzinfo=timezone.utc))
         if memory.error:  # memory is optional: say so, but keep the result
             week_result["warnings"].append(f"{memory.error}; scored without past-week trends "
                                            f"and not stored.")

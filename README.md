@@ -268,6 +268,7 @@ business's past runs (shops are keyed by name + location).
 | `themes[].reasoning` | string | Why this score. A paragraph |
 | `themes[].next_step` | string | What to do. A paragraph |
 | `warnings` | string[] | Non-fatal problems: review fetching stopped early, Hindsight down, themes that couldn't be scored. Show them as a banner; the result is still usable |
+| `stored` | bool | `true` only if Hindsight actually kept this run (false when `store` was off, Hindsight failed, or no theme was really scored) |
 | `themes[].degraded` | bool | `true` = not a real score (Groq unavailable or an unusable reply); its `0` is a placeholder |
 
 `themes` comes back unsorted — sort by `score` in the client. Split at zero for

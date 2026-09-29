@@ -44,6 +44,34 @@ const fmt = n => Number(n).toLocaleString('en-US');
 const sgn = n => n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : '0';
 const plural = (n, w, ws) => `${fmt(n)} ${n === 1 ? w : (ws || w + 's')}`;
 const slug = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+// SHA-1 hex of a string's UTF-8 bytes (synchronous: crypto.subtle is async and missing on plain http)
+function sha1(str){
+  const b = [...new TextEncoder().encode(str)], n = b.length;
+  b.push(0x80); while (b.length % 64 !== 56) b.push(0);
+  const bits = n * 8; for (let i = 7; i >= 0; i--) b.push(i > 3 ? 0 : (bits >>> (i * 8)) & 255);
+  let h = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
+  const w = new Array(80), rotl = (x, k) => (x << k) | (x >>> (32 - k));
+  for (let o = 0; o < b.length; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = (b[o+4*i] << 24) | (b[o+4*i+1] << 16) | (b[o+4*i+2] << 8) | b[o+4*i+3];
+    for (let i = 16; i < 80; i++) w[i] = rotl(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1);
+    let [a, bb, c, d, e] = h;
+    for (let i = 0; i < 80; i++) {
+      const [f, k] = i < 20 ? [(bb & c) | (~bb & d), 0x5A827999] : i < 40 ? [bb ^ c ^ d, 0x6ED9EBA1] : i < 60 ? [(bb & c) | (bb & d) | (c & d), 0x8F1BBCDC] : [bb ^ c ^ d, 0xCA62C1D6];
+      const t = (rotl(a, 5) + f + e + k + w[i]) | 0;
+      e = d; d = c; c = rotl(bb, 30); bb = a; a = t;
+    }
+    h = [h[0]+a, h[1]+bb, h[2]+c, h[3]+d, h[4]+e].map(x => x | 0);
+  }
+  return h.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+}
+// memory.business_tag() without the "business:" prefix: a-z0-9 slug, plus a hash of the
+// full name when it has any non-ASCII letters, so names in other scripts don't collide
+const bizSlug = s => {
+  s = String(s ?? ''); const sl = slug(s);
+  if (sl && /^[\x00-\x7f]*$/.test(s)) return sl;
+  const digest = sha1(s.trim().toLowerCase()).slice(0, 10);
+  return sl ? `${sl}-${digest}` : digest;
+};
 const trunc = (s, n) => s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s;
 const sentences = s => (String(s || '').match(/[^.!?]+(?:[.!?]+["”’)]*|$)/g) || []).map(x => x.trim()).filter(Boolean);
 const firstSentence = (s, n = 150) => trunc(sentences(s)[0] || String(s || ''), n);
@@ -111,7 +139,8 @@ function saveHistory(){
 // themes[].degraded marks a placeholder 0 (Groq unavailable or an unusable reply);
 // the text check covers servers from before that flag existed
 const FALLBACK_RE = /LLM unavailable|Could not parse structured output/i;
-const BANK = 'feedback-analyser-v2'; // memory.py default; HINDSIGHT_BANK_ID overrides it on the server
+// defaults for servers from before /health reported them; checkHealth() replaces both
+let BANK = 'feedback-analyser-v2'; // memory.py default; HINDSIGHT_BANK_ID overrides it on the server
 const REASONS = {
   too_short:       {n:'Too short',       d:'under 4 words',               c:'var(--sky)'},
   duplicate:       {n:'Duplicate',       d:'the same text twice',         c:'var(--teal)'},
@@ -119,7 +148,7 @@ const REASONS = {
   gibberish:       {n:'Gibberish',       d:'too few vowels to be words',  c:'var(--blue)'},
   empty:           {n:'Empty',           d:'no text left after cleaning', c:'var(--teal-soft)'}
 };
-const SAMPLE_SIZE = 50; // scorer.py: themes[].count is counted within a random sample of this many
+let SAMPLE_SIZE = 50; // scorer.py: themes[].count is counted within a random sample of this many
 const reasonOf = r => REASONS[r] || {n:String(r).replace(/_/g, ' '), d:'filtered by the Checker', c:'var(--ink-3)'};
 
 function normResult(res){
@@ -148,8 +177,8 @@ function normResult(res){
 }
 const sampleOf = R => R.verified == null ? null : Math.min(SAMPLE_SIZE, R.verified);
 const bizLabel = R => R.location ? `${R.business}, ${R.location}` : R.business;
-const tagOf = R => `business:${slug(bizLabel(R))}`;  // memory.business_tag()
-const runLabel = rec => rec ? `${rec.mode === 'week' ? 'Week' : 'Run'} ${rec.run}` : '';
+const tagOf = R => `business:${bizSlug(bizLabel(R))}`;  // memory.business_tag()
+const runLabel = rec => rec ? `${rec.mode === 'week' ? 'Week' : 'Run'} ${rec.run}${rec.mode !== 'week' && state.runs.some(r => r.at !== rec.at && r.run === rec.run) ? ` (${fmtDay(rec.at)})` : ''}` : '';
 const realThemes = R => R.themes.filter(t => !t.fallback);
 const worstOf = R => realThemes(R).find(t => t.score < 0) || null;
 const bestOf = R => [...realThemes(R)].reverse().find(t => t.score > 0) || null;
@@ -186,7 +215,17 @@ function stem(w){
   const hit = SYN.find(([k]) => w.startsWith(k));
   return hit ? hit[1] : w;
 }
-const tokens = s => new Set(String(s).toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1 && !STOP.has(w)).map(stem).filter(w => w.length > 2));
+const TOK = new Map();
+function tokens(s){
+  s = String(s);
+  let v = TOK.get(s);
+  if (!v) {
+    v = new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1 && !STOP.has(w)).map(stem).filter(w => w.length > 2));
+    if (TOK.size > 2000) TOK.clear();
+    TOK.set(s, v);
+  }
+  return v;
+}
 function similarity(a, b){
   const A = tokens(a.name), B = tokens(b.name);
   let inter = 0; A.forEach(w => { if (B.has(w)) inter++; });
@@ -209,21 +248,29 @@ const cites = t => sentences(t.reasoning).filter(s => CITE_RE.test(s));
 const state = { key:null, runs:[], idx:-1, theme:null, example:false, running:false, stream:true, playing:false, mode:'shop', provider:'serpapi' };
 const cur = () => state.runs[state.idx] || null;
 const prevRec = () => state.idx > 0 ? state.runs[state.idx - 1] : null;
-const hydrate = runs => runs.map(r => ({...r, r: normResult(r.res)})).sort((a,b) => a.run - b.run);
+const byRun = (a, b) => a.run - b.run || (a.at||0) - (b.at||0);
+const hydrate = runs => runs.map(r => ({...r, r: normResult(r.res)})).sort(byRun);
 
 /* ---------- API ---------- */
-const qsApi = new URLSearchParams(location.search).get('api');
-if (qsApi) LS.set(AKEY, qsApi);
-const API_CANDIDATES = [...new Set([qsApi || LS.get(AKEY, null), /^https?:$/.test(location.protocol) ? location.origin : null, 'http://localhost:8000'].filter(Boolean).map(s => s.replace(/\/+$/, '')))];
+// ?api= used to be saved for good, so one crafted link rerouted every later analysis
+try { localStorage.removeItem(AKEY); } catch {}
+const qsApi = (() => {
+  const raw = new URLSearchParams(location.search).get('api'); if (!raw) return null;
+  let u; try { u = new URL(raw); } catch { return null; }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  const local = u.origin === location.origin || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname);
+  return local || confirm(`This link asks the dashboard to send analyses to ${u.origin}. Only allow it if you trust that server.`) ? u.origin + u.pathname : null;
+})();
+const API_CANDIDATES = [...new Set([qsApi, /^https?:$/.test(location.protocol) ? location.origin : null, 'http://localhost:8000'].filter(Boolean).map(s => s.replace(/\/+$/, '')))];
 let API = API_CANDIDATES[0], apiUp = null, healthT;
-async function checkHealth(){
+async function checkHealth(quiet){
   const chip = $('#apiChip');
-  chip.className = 'apichip well wait'; $('#apiText').textContent = 'checking API';
+  if (!quiet) { chip.className = 'apichip well wait'; $('#apiText').textContent = 'checking API'; }
   for (const base of API_CANDIDATES) {
     try {
       const r = await fetch(base + '/health', {signal: AbortSignal.timeout(4000)});
       const j = r.ok ? await r.json() : null;
-      if (j && j.status === 'ok') { API = base; apiUp = true; break; }
+      if (j && j.status === 'ok') { API = base; apiUp = true; useServerInfo(j); break; }
     } catch {}
     apiUp = false;
   }
@@ -233,8 +280,15 @@ async function checkHealth(){
   $('#docsLink').href = API + '/docs';
   $('#demoKicker').textContent = apiUp ? `Workspace · connected to ${API.replace(/^https?:\/\//, '')}` : 'Workspace · API offline, start it to run analyses';
   clearTimeout(healthT);
-  if (!apiUp) healthT = setTimeout(checkHealth, 20000);
+  healthT = setTimeout(() => checkHealth(true), apiUp ? 60000 : 20000);
   return apiUp;
+}
+function useServerInfo(j){
+  const bank = typeof j.bank_id === 'string' && j.bank_id ? j.bank_id : BANK;
+  const size = Number.isInteger(j.sample_size) && j.sample_size > 0 ? j.sample_size : SAMPLE_SIZE;
+  if (bank === BANK && size === SAMPLE_SIZE) return;
+  BANK = bank; SAMPLE_SIZE = size;
+  if (state.runs.length && !state.running) renderAll();
 }
 async function call(path, body){
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 300000); // README: allow well over 180 s
@@ -477,7 +531,7 @@ function renderProof(){
   $('#pfCompare').innerHTML = !R
     ? `<p class="empty">From the second run, each theme shows up here as better, worse, new or unchanged.</p>`
     : !prev ? `<p class="empty">${state.idx === 0 && n > 1 ? 'This is the earliest run. Drag the timeline forward to compare.' : 'Nothing to compare yet.'}</p>`
-    : compareRows(rec, prev).slice(0, 5).map(({t, m, kind}) => `<button class="belief ${KIND[kind].cls} clay-sm" data-go="${esc(t.id)}"><span class="w">${esc(runLabel(prev).replace(/\D+/, ''))}→${rec.run}</span><p>${esc(t.name)}</p><span class="conf">${m ? `${m.count} → ${t.count} mentions · ${sgn(m.score)} → ${sgn(t.score)}` : `${plural(t.count, 'mention')} · no match in ${esc(runLabel(prev).toLowerCase())}`}</span><span class="stamp">${KIND[kind].stamp}</span></button>`).join('');
+    : compareRows(rec, prev).slice(0, 5).map(({t, m, kind}) => `<button class="belief ${KIND[kind].cls} clay-sm" data-go="${esc(t.id)}"><span class="w">${prev.run}→${rec.run}</span><p>${esc(t.name)}</p><span class="conf">${m ? `${m.count} → ${t.count} mentions · ${sgn(m.score)} → ${sgn(t.score)}` : `${plural(t.count, 'mention')} · no match in ${esc(runLabel(prev).toLowerCase())}`}</span><span class="stamp">${KIND[kind].stamp}</span></button>`).join('');
 }
 
 /* ---------- how it works ---------- */
@@ -589,8 +643,9 @@ function hintRun(){
   hintT = setTimeout(() => {
     if (state.mode !== 'shop') return;
     const name = $('#fName').value.trim(), loc = $('#fLoc').value.trim();
-    const e = name && HISTORY[`shop:${slug(loc ? `${name}, ${loc}` : name)}`];
-    if (!e) { msg(''); return; }
+    const e = name && HISTORY[`shop:${bizSlug(loc ? `${name}, ${loc}` : name)}`];
+    // 2. nothing in history: a new business starts at run 1, not at the last business's next number
+    if (!e) { $('#fRun').value = 1; msg(''); return; }
     const last = Math.max(...e.runs.map(r => r.run));
     $('#fRun').value = last + 1;
     msg('', false, `${plural(e.runs.length, 'earlier run')} of ${esc(e.label)} in this browser, so this will be run ${last + 1}. <button class="link" type="button" data-key="${esc(e.key)}">Show them</button>`);
@@ -846,7 +901,7 @@ function pushFeedback(){
   if (items.length > 6) { const old = items[items.length-1]; old.classList.add('gone'); setTimeout(() => old.remove(), 500); }
 }
 function resetStream(){
-  const rec = cur(), key = rec ? `${state.key}#${rec.run}` : null;
+  const rec = cur(), key = rec ? `${state.key}#${rec.run}@${rec.at}` : null;
   if (key === streamKey) return;
   streamKey = key; deck = [];
   const R = rec?.r;
@@ -854,8 +909,9 @@ function resetStream(){
   countUp($('#cSpam'), R ? R.rejected_count : 0, 400);
   countUp($('#cThemed'), R ? R.themes.length : 0, 400);
   if (!R) { $('#stream').innerHTML = `<li class="empty">Quotes from the reviews replay here once a run finishes, alongside what the Checker threw out.</li>`; return; }
-  const seed = freshDeck().filter(it => it.k === 'quote').slice(0, 4);
   deck = freshDeck();
+  const seed = deck.filter(it => it.k === 'quote').slice(0, 4);
+  deck = deck.filter(it => !seed.includes(it));
   $('#stream').innerHTML = seed.length ? seed.map(it => `<li class="fbw">${fbHTML(it, true)}</li>`).join('') : `<li class="empty">No quotes came back in this run.</li>`;
 }
 function setStream(on){
@@ -907,20 +963,24 @@ function answerFor(q, rec){
   const w = worstOf(R), b = bestOf(R);
   return {steps:[read, 'no theme matched the question'], a:`That doesn't match anything in this run. The themes to look at are ${w ? `${w.name} (${sgn(w.score)}), the most urgent problem` : 'the ones in the list'}${b ? `, and ${b.name} (${sgn(b.score)}), the strength to protect` : ''}. Try asking about one of those, or what changed since the last run.`};
 }
+let askSeq = 0;
 async function ask(text){
-  const box = $('#answer'), rec = cur();
+  const my = ++askSeq, box = $('#answer'), rec = cur(), stale = () => my !== askSeq;
   box.innerHTML = `<p class="q"></p><div class="strace"></div><p class="a"></p>`;
   box.querySelector('.q').textContent = text;
   if (!rec) { await typeInto(box.querySelector('.a'), 'Run an analysis first. Answers come from the result it returns.', 12); return; }
   const A = answerFor(text, rec), tr = box.querySelector('.strace');
   const step = async (label, ms) => { const d = document.createElement('div'); d.className = 'pending'; d.innerHTML = '<i></i><span></span>'; d.lastChild.textContent = label; tr.appendChild(d); await wait(ms); d.className = ''; };
   $('#agentBox').classList.add('thinking');
-  for (const [k, s] of A.steps.filter(Boolean).entries()) await step(s, [450, 400, 300][k] || 300);
+  for (const [k, s] of A.steps.filter(Boolean).entries()) { await step(s, [450, 400, 300][k] || 300); if (stale()) return; }
   $('#agentBox').classList.remove('thinking');
   await typeInto(box.querySelector('.a'), A.a, 12);
+  if (stale()) return;
   if (A.go) { const t = rec.r.themes.find(x => x.id === A.go); const b = document.createElement('button'); b.className = 'btn goto'; b.dataset.go = A.go; b.innerHTML = `${ic('arrow')}Open ${esc(trunc(t.name, 32))}`; box.appendChild(b); }
 }
 function renderAskIdle(){
+  askSeq++;  // a question still answering belongs to the run that was on screen
+  if (!state.running) $('#agentBox').classList.remove('thinking');
   const rec = cur(), box = $('#answer');
   if (!rec) { box.innerHTML = `<p class="q">What should I fix first?</p><p class="a">Run an analysis and ask about it here: what to fix, what to protect, what changed since the last run, or why reviews were filtered out.</p>`; return; }
   const A = answerFor(QCHIPS[0], rec), t = A.go && rec.r.themes.find(x => x.id === A.go);
@@ -957,14 +1017,16 @@ function pickTheme(prevTheme){
   const m = prevTheme && matchIn(prevTheme, cur());
   return (m?.t || worstOf(R) || R.themes[0] || {}).id || null;
 }
-function openRuns(key, runs, {example = false, run = null, typed = false} = {}){
+function openRuns(key, runs, {example = false, run = null, at = null, typed = false} = {}){
   stopPlay();
   state.key = key; state.example = example; state.runs = runs;
-  state.idx = run == null ? runs.length - 1 : Math.max(0, runs.findIndex(r => r.run === run));
+  state.idx = run == null ? runs.length - 1 : Math.max(0, at != null ? runs.findIndex(r => r.at === at) : runs.findLastIndex(r => r.run === run));
   state.theme = pickTheme(null);
   renderAll(typed);
 }
+const busy = () => { if (state.running) toast('An analysis is still running. Open this once it finishes.'); return state.running; };
 function openEntry(key){
+  if (busy()) return;
   const e = HISTORY[key]; if (!e?.runs?.length) return;
   fillForm(e); msg('');
   openRuns(key, hydrate(e.runs));
@@ -972,6 +1034,7 @@ function openEntry(key){
   toast(`Loaded ${plural(e.runs.length, e.mode === 'week' ? 'week' : 'run')} of ${e.label} from this browser. Nothing was sent to the API.`);
 }
 function loadExample(){
+  if (busy()) return;
   openRuns('example', hydrate(EXAMPLE), {example:true, typed:true});
   toast('Showing example data for a fictional café. Nothing was sent to the API.');
 }
@@ -987,17 +1050,23 @@ function selectTheme(id, scroll){
   state.theme = id; renderThemes(); renderDetail(true);
   if (scroll) $('#detail').scrollIntoView({behavior: reduce ? 'auto' : 'smooth', block:'start'});
 }
+const dayOf = ts => new Date(ts).toDateString();
+// servers from before the "stored" flag: asked to store and no warning saying it wasn't
+const storedOf = (req, res) => typeof res?.stored === 'boolean' ? res.stored
+  : (req.mode === 'week' || req.body?.store !== false) && !normResult(res).warnings.some(w => /not stored|isn't stored/i.test(w));
 function saveRun(req, res, ms){
-  const R = normResult(res), label = bizLabel(R) || req.label, key = `${req.mode}:${slug(label)}`;
-  const run = parseInt(res.week, 10) || req.run;
-  const rec = {mode:req.mode, run, at:Date.now(), ms, stored: req.mode === 'week' ? true : !!req.body.store, request: req.body || req.request, res};
+  const R = normResult(res), label = bizLabel(R) || req.label, key = `${req.mode}:${bizSlug(label)}`;
+  const run = parseInt(res.week, 10) || req.run, at = Date.now();
+  const rec = {mode:req.mode, run, at, ms, stored: storedOf(req, res), request: req.body || req.request, res};
   const e = HISTORY[key] || (HISTORY[key] = {key, mode:req.mode, label, name:R.business, location:R.location, runs:[]});
-  e.runs = e.runs.filter(r => r.run !== run).concat(rec).sort((a,b) => a.run - b.run).slice(-MAX_RUNS);
+  // mirror what Hindsight replaces: week:N for weeks, run:N:<day> for shop runs
+  const same = r => r.run === run && (req.mode === 'week' || dayOf(r.at) === dayOf(at));
+  e.runs = e.runs.filter(r => !same(r)).concat(rec).sort(byRun).slice(-MAX_RUNS);
   e.label = label; e.at = rec.at;
   const all = Object.values(HISTORY).sort((a,b) => (b.at||0) - (a.at||0));
   all.slice(MAX_BIZ).forEach(x => delete HISTORY[x.key]);
   state.key = key; saveHistory(); LS.set(LKEY, key);
-  return {key, run};
+  return {key, run, at};
 }
 
 /* ---------- running an analysis ---------- */
@@ -1025,9 +1094,9 @@ async function runAnalysis(e){
     const res = await call(req.path, req.body);
     const ms = Math.round(performance.now() - t0);
     await finishProgress();
-    const {key, run} = saveRun(req, res, ms);
+    const {key, run, at} = saveRun(req, res, ms);
     state.running = false;
-    openRuns(key, hydrate(HISTORY[key].runs), {run, typed:true});
+    openRuns(key, hydrate(HISTORY[key].runs), {run, at, typed:true});
     if (req.mode === 'shop') $('#fRun').value = run + 1;
     const R = cur().r, failed = R.themes.filter(t => t.fallback).length;
     toast(`${runLabel(cur())} done in ${Math.round(ms/1000)} s · ${plural(R.themes.length, 'theme')} · ${fmt(R.rejected_count)} filtered${failed ? ` · ${failed} not scored` : ''}${cur().stored ? ' · stored in Hindsight' : ''}.`);

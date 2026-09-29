@@ -35,8 +35,17 @@ WIDTH = 78
 FALLBACK_MARKER = "LLM unavailable"
 
 
+_verbose = True
+
+
+def say(*args) -> None:
+    """Print only in CLI mode. api.py calls the same function with verbose=False."""
+    if _verbose:
+        print(*args)
+
+
 def rule(title: str = "") -> None:
-    print(f"\n{'─' * WIDTH}" if not title else f"\n── {title} " + "─" * max(0, WIDTH - len(title) - 4))
+    say(f"\n{'─' * WIDTH}" if not title else f"\n── {title} " + "─" * max(0, WIDTH - len(title) - 4))
 
 
 def wrap(text: str, indent: str = "      ") -> str:
@@ -45,67 +54,74 @@ def wrap(text: str, indent: str = "      ") -> str:
 
 def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int = 200,
                  store: bool = True, run_number: int = 1, max_pages: int = MAX_PAGES,
-                 months: int = 3) -> dict:
-    print(f"\n{'=' * WIDTH}\n  {name} — {location}\n{'=' * WIDTH}")
+                 months: int = 3, verbose: bool = True) -> dict:
+    global _verbose
+    _verbose = verbose
+    say(f"\n{'=' * WIDTH}\n  {name} — {location}\n{'=' * WIDTH}")
 
     # 1. GATHER -------------------------------------------------------------
     rule("1/5  Gathering reviews from the web")
     since = (date.today() - timedelta(days=round(months * 30.44))).isoformat() if months else None
     source = REGISTRY["shop"](name=name, location=location, provider=provider, limit=limit,
                               max_pages=max_pages, since=since)
-    print(f"      source   : {source!r}")
-    print(f"      window   : " + (f"last {months} months (since {since})" if since else "all time"))
+    say(f"      source   : {source!r}")
+    plural = "month" if months == 1 else "months"
+    say(f"      window   : " + (f"last {months} {plural} (since {since})" if since else "all time"))
     reviews = gather([source], log=lambda *a: None)
     if reviews.empty:
-        sys.exit(f"\n      No reviews found for {name!r} in {location!r}"
-                 + (f" since {since}.\n      Widen it with --months 0 (all time)." if since else ".\n")
-                 + "      Otherwise try a fuller address, or --place-id to pin the exact branch.")
+        raise LookupError(
+            f"No reviews found for {name!r} in {location!r}"
+            + (f" since {since}. Widen the window (months=0 for all time)." if since else ".")
+            + " Otherwise try a fuller address, or pin the branch with place_id.")
 
     full = write(reviews, DEFAULT_OUT, append=True)
     dated = reviews[reviews["date"] != ""]["date"]
     rated = pd.to_numeric(reviews["rating"], errors="coerce").dropna()
-    print(f"      gathered : {len(reviews)} reviews"
+    say(f"      gathered : {len(reviews)} reviews"
           + (f", {dated.min()} .. {dated.max()}" if len(dated) else ", no dates"))
     if len(rated):
         stars = "".join(f"  {s}★ {(rated == s).sum()}" for s in (5, 4, 3, 2, 1))
-        print(f"      ratings  : avg {rated.mean():.2f}{stars}")
-    print(f"      saved    : {DEFAULT_OUT}  ({len(full)} rows in the database)")
+        say(f"      ratings  : avg {rated.mean():.2f}{stars}")
+    say(f"      saved    : {DEFAULT_OUT}  ({len(full)} rows in the database)")
     if source.pages_fetched:
         capped = " (page cap hit — raise --max-pages for more)" if source.pages_fetched >= max_pages else ""
-        print(f"      cost     : {source.pages_fetched} billable SerpApi searches{capped}")
+        say(f"      cost     : {source.pages_fetched} billable SerpApi searches{capped}")
 
     # 2. CHECK --------------------------------------------------------------
     rule("2/5  Checking (filtering spam, duplicates, gibberish)")
     verified, rejected_count, by_reason = check_reviews(reviews.to_dict("records"))
-    print(f"      verified : {len(verified)} of {len(reviews)}")
-    print(f"      rejected : {rejected_count}")
+    say(f"      verified : {len(verified)} of {len(reviews)}")
+    say(f"      rejected : {rejected_count}")
     for reason, n in sorted(by_reason.items(), key=lambda kv: -kv[1]):
-        print(f"                 {reason:<18} {n}")
+        say(f"                 {reason:<18} {n}")
     if not verified:
-        sys.exit("      Nothing survived the Checker — nothing to analyse.")
+        raise LookupError(f"All {len(reviews)} reviews for {name!r} were rejected by the "
+                          f"Checker ({dict(by_reason)}) — nothing left to analyse.")
 
     # 3. SCORE (theme discovery) --------------------------------------------
     rule("3/5  Finding themes")
     themes = extract_themes(verified, rejected_count)
     if not themes:
-        sys.exit("      The Scorer returned no themes — likely a Groq failure or rate limit.")
-    print(f"      found    : {len(themes)} themes across {len(verified)} verified reviews")
+        # empty is ambiguous: genuinely no pattern, or a silently failed LLM call
+        raise RuntimeError(f"The Scorer found no themes in {len(verified)} verified reviews. "
+                           f"Usually means the Groq call failed or hit a rate limit.")
+    say(f"      found    : {len(themes)} themes across {len(verified)} verified reviews")
     for t in themes:
-        print(f"                 {t['name'][:46]:<46} {t['count']:>4} mentions")
+        say(f"                 {t['name'][:46]:<46} {t['count']:>4} mentions")
 
     # 4 + 5. ANALYSE AND STORE ----------------------------------------------
     rule("4/5  Scoring each theme (-5..+5) with reasoning")
     with HindsightMemory() as memory:
-        print(f"      memory   : Hindsight bank {memory.bank_id!r}\n")
+        say(f"      memory   : Hindsight bank {memory.bank_id!r}\n")
         period = (f"{dated.min()} to {dated.max()}" if len(dated) else
-                  (f"the last {months} months" if months else "all time"))
+                  (f"the last {months} {plural}" if months else "all time"))
         analyzed = analyze_week(themes, memory, business=f"{name}, {location}", period=period)
 
         for t in sorted(analyzed, key=lambda t: t["score"]):
             flag = "  ⚠ NOT A REAL SCORE" if FALLBACK_MARKER in t["reasoning"] else ""
-            print(f"  {t['score']:+d}   {t['name']}   ({t['count']} mentions){flag}")
-            print(wrap(f"why   {t['reasoning']}"))
-            print(wrap(f"do    {t['next_step']}") + "\n")
+            say(f"  {t['score']:+d}   {t['name']}   ({t['count']} mentions){flag}")
+            say(wrap(f"why   {t['reasoning']}"))
+            say(wrap(f"do    {t['next_step']}") + "\n")
 
         result = {"week": run_number, "business": name, "location": location, "period": period,
                   "rejected_count": rejected_count, "rejected_by_reason": by_reason,
@@ -114,10 +130,10 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
         rule("5/5  Storing for next time")
         if store:
             memory.store_week(run_number, result)
-            print(f"      stored   : run {run_number} -> bank {memory.bank_id!r}")
-            print("      next run recalls this to spot trends ('worse than last time')")
+            say(f"      stored   : run {run_number} -> bank {memory.bank_id!r}")
+            say("      next run recalls this to spot trends ('worse than last time')")
         else:
-            print("      skipped (--no-store)")
+            say("      skipped (--no-store)")
 
     # SUMMARY ---------------------------------------------------------------
     degraded = [t for t in analyzed if FALLBACK_MARKER in t["reasoning"]]
@@ -125,14 +141,14 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
     rule("SUMMARY")
     if real:
         worst, best = min(real, key=lambda t: t["score"]), max(real, key=lambda t: t["score"])
-        print(f"      Fix first  : {worst['name']} ({worst['score']:+d})")
-        print(wrap(worst["next_step"], "                   "))
-        print(f"      Protect    : {best['name']} ({best['score']:+d})")
-        print(wrap(best["next_step"], "                   "))
+        say(f"      Fix first  : {worst['name']} ({worst['score']:+d})")
+        say(wrap(worst["next_step"], "                   "))
+        say(f"      Protect    : {best['name']} ({best['score']:+d})")
+        say(wrap(best["next_step"], "                   "))
     if degraded:
-        print(f"\n      ⚠ {len(degraded)} of {len(analyzed)} themes could NOT be scored — Groq was "
+        say(f"\n      ⚠ {len(degraded)} of {len(analyzed)} themes could NOT be scored — Groq was "
               f"unavailable or\n        rate limited. Those show +0 but are not real results.")
-    print()
+    say("")
     return result
 
 
@@ -158,9 +174,12 @@ def main():
     if not name:
         sys.exit("A business name is required.")
 
-    analyse_shop(name, location, provider=args.provider, limit=args.limit,
-                 store=not args.no_store, run_number=args.run_number, max_pages=args.max_pages,
-                 months=args.months)
+    try:
+        analyse_shop(name, location, provider=args.provider, limit=args.limit,
+                     store=not args.no_store, run_number=args.run_number,
+                     max_pages=args.max_pages, months=args.months)
+    except (LookupError, RuntimeError) as e:
+        sys.exit(f"\n  {e}\n")
 
 
 if __name__ == "__main__":

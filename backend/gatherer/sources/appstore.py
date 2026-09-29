@@ -8,7 +8,7 @@ import urllib.request
 from typing import Iterator
 
 from ..schema import Review, OWN
-from .base import Source
+from .base import SSL_CONTEXT, Source
 
 FEED = "https://itunes.apple.com/{country}/rss/customerreviews/page={page}/id={app_id}/sortby=mostrecent/json"
 
@@ -24,7 +24,7 @@ class AppStoreSource(Source):
     def _page(self, page: int) -> list:
         url = FEED.format(country=self.country, page=page, app_id=self.app_id)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=20, context=SSL_CONTEXT) as resp:
             feed = json.load(resp).get("feed", {})
         entries = feed.get("entry", [])
         if isinstance(entries, dict):  # a single entry isn't wrapped in a list

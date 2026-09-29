@@ -28,7 +28,7 @@ from datetime import date, timedelta
 from typing import Iterator
 
 from ..schema import Review, OWN
-from .base import Source
+from .base import SSL_CONTEXT, Source
 
 PLACES_SEARCH = "https://places.googleapis.com/v1/places:searchText"
 PLACES_DETAILS = "https://places.googleapis.com/v1/places/{place_id}"
@@ -157,7 +157,7 @@ class ShopSource(Source):
         host = urllib.parse.urlsplit(url).netloc
         for attempt in range(RETRIES + 1):
             try:
-                with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                with urllib.request.urlopen(req, timeout=TIMEOUT, context=SSL_CONTEXT) as resp:
                     return json.load(resp)
             except urllib.error.HTTPError as e:
                 # both APIs put the useful part ("API key not valid", quota) in the body

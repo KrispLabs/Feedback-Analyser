@@ -53,7 +53,11 @@ def build_sources(config: dict, base_dir: Path | None = None) -> list[Source]:
 
 
 def gather(sources: list[Source], min_chars: int = 1, since: str | None = None,
-           until: str | None = None, log=print) -> pd.DataFrame:
+           until: str | None = None, log=print, errors: list | None = None) -> pd.DataFrame:
+    """errors: if given, each failed source's (source, exception) is appended.
+    A failure is still logged and the other sources still run, but a caller
+    that silences `log` can now tell "SerpApi rejected the key" apart from
+    "this shop has no reviews" -- both used to come back as zero rows."""
     rows = []
     for src in sources:
         fetched = kept = 0
@@ -66,6 +70,8 @@ def gather(sources: list[Source], min_chars: int = 1, since: str | None = None,
                     kept += 1
         except Exception as e:  # one dead source shouldn't kill the week's run
             log(f"  ! {src!r} failed: {e}")
+            if errors is not None:
+                errors.append((src, e))
         log(f"  {src!r}: fetched {fetched}, kept {kept}"
             + ("  <- nothing returned, check the id/path" if fetched == 0 else ""))
 

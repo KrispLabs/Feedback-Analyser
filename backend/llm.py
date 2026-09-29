@@ -24,7 +24,8 @@ import time
 
 from groq import Groq, RateLimitError
 
-from config import load_keys
+from config import get_key
+from errors import ConfigError, UpstreamError
 
 MODEL = "openai/gpt-oss-120b"
 MAX_TOKENS = 1500
@@ -42,7 +43,14 @@ def call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3, fallbac
     Retry-After header -- but capped at MAX_RATE_LIMIT_WAIT: if Groq asks for
     longer than that, retrying won't help within this call (daily quota, not
     a per-minute window), so fail fast to the fallback instead of hanging."""
-    client = Groq(api_key=load_keys()["GROQ_API_KEY"])
+    # Only the Groq key: load_keys() demands every key, so a missing
+    # HINDSIGHT_API_KEY used to break every LLM call too. A missing key is a
+    # config problem, not a flaky call -- raise it even when there's a
+    # fallback, rather than returning six placeholder scores.
+    api_key = get_key("GROQ_API_KEY")
+    if not api_key:
+        raise ConfigError("GROQ_API_KEY is not set -- see .env.example, or add it to keys.csv.")
+    client = Groq(api_key=api_key)
     last_error = None
 
     for attempt in range(max_retries):
@@ -80,7 +88,7 @@ def call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3, fallbac
 
     if fallback is not None:
         return fallback
-    raise RuntimeError(f"Groq call failed after {max_retries} attempts: {last_error}")
+    raise UpstreamError(f"Groq call failed after {max_retries} attempts: {last_error}")
 
 
 def strip_code_fences(text: str) -> str:

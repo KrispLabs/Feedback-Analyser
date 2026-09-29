@@ -87,7 +87,7 @@ def _parse(raw: str) -> dict:
                 "reasoning": str(result.get("reasoning", "")),
                 "next_step": str(result.get("next_step", "")),
                 "degraded": False}
-    except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError, OverflowError):  # Overflow: "score": Infinity
         return {"score": 0,
                 "reasoning": f"Could not parse the model's reply: {raw[:300]}",
                 "next_step": "Could not parse structured output; review manually.",

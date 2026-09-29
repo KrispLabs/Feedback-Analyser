@@ -137,15 +137,15 @@ docker compose up        # serves the API on :8000
 ```bash
 python analyse_shop.py                                   # prompts for both
 python analyse_shop.py "Niloufer Cafe" "Hitech City"
-python analyse_shop.py "Niloufer Cafe" "Hitech City" --months 6 --limit 300
+python analyse_shop.py "Niloufer Cafe" "Hitech City" --limit 200 --months 6
 ```
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--months N` | `3` | Only analyse the last N months. `0` = all time |
-| `--limit N` | `200` | Max reviews **with text** to gather |
+| `--limit N` | `400` | Analyse the newest N reviews **with text** |
+| `--months N` | `0` | Also skip reviews older than N months. `0` = no age limit |
 | `--provider` | `serpapi` | `serpapi` (hundreds of reviews) or `places` (Google's own API, max 5) |
-| `--max-pages N` | `15` | Ceiling on billable SerpApi searches, so one run can't drain your quota |
+| `--max-pages N` | `30` | Ceiling on billable SerpApi searches, so one run can't drain your quota |
 | `--run N` | `1` | Numbers this run so later runs compare against it |
 | `--no-store` | off | Don't write to Hindsight |
 
@@ -197,8 +197,8 @@ Body:
 |---|---|---|---|
 | `name` | string | *required* | `"Niloufer Cafe"` |
 | `location` | string | `""` | `"Hitech City, Hyderabad"` |
-| `months` | int | `3` | Last N months. `0` = all time. Max 120 |
-| `limit` | int | `200` | Max reviews with text. 1–1000 |
+| `limit` | int | `400` | Analyse the newest N reviews with text. 1–1000 |
+| `months` | int | `0` | Also skip reviews older than N months. `0` = no age limit. Max 120 |
 | `provider` | string | `"serpapi"` | `"serpapi"` or `"places"` |
 | `store` | bool | `true` | Write to Hindsight for trend recall |
 | `run_number` | int | `1` | Later runs compare against earlier ones |
@@ -206,7 +206,7 @@ Body:
 ```bash
 curl -X POST http://localhost:8000/shops/analyse \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Niloufer Cafe","location":"Hitech City","months":3}'
+  -d '{"name":"Niloufer Cafe","location":"Hitech City"}'
 ```
 
 **`200`** — the whole dashboard payload:
@@ -217,6 +217,8 @@ curl -X POST http://localhost:8000/shops/analyse \
   "business": "Niloufer Cafe",
   "location": "Hitech City",
   "period": "2026-07-18 to 2026-09-28",
+  "reviews_gathered": 400,
+  "reviews_verified": 390,
   "rejected_count": 10,
   "rejected_by_reason": { "too_short": 10 },
   "themes": [
@@ -256,13 +258,16 @@ business's past runs (shops are keyed by name + location).
 | `business`, `location` | string | Header |
 | `period` | string | `"2026-07-18 to 2026-09-28"` — show it, the scores only describe this window |
 | `rejected_count` | int | "10 reviews filtered out" |
-| `rejected_by_reason` | object | `{"too_short": 10}` — keys are `too_short`, `duplicate`, `repeated_phrase`, `gibberish` |
+| `reviews_gathered` | int | Reviews with text fetched. Below `limit` means the shop has no more (or `months` cut it off) |
+| `reviews_verified` | int | Of those, how many passed the Checker |
+| `rejected_by_reason` | object | `{"too_short": 10}` — keys are `too_short`, `duplicate`, `repeated_phrase`, `gibberish`, `empty` |
 | `themes[].name` | string | Card title |
 | `themes[].count` | int | How many reviews mention it |
 | `themes[].score` | int | **−5..+5.** Sort ascending: worst first |
 | `themes[].samples` | string[] | 1–3 real quotes. Good for an expandable card |
 | `themes[].reasoning` | string | Why this score. A paragraph |
 | `themes[].next_step` | string | What to do. A paragraph |
+| `warnings` | string[] | Non-fatal problems: review fetching stopped early, Hindsight down, themes that couldn't be scored. Show them as a banner; the result is still usable |
 | `themes[].degraded` | bool | `true` = not a real score (Groq unavailable or an unusable reply); its `0` is a placeholder |
 
 `themes` comes back unsorted — sort by `score` in the client. Split at zero for
@@ -270,11 +275,18 @@ a two-column "Fix these / Protect these" layout.
 
 ### Errors
 
-| Status | Meaning | What to show |
-|---|---|---|
-| `404` | Business not found, or every review was filtered out | "Couldn't find reviews for that business — try adding the city" |
-| `422` | Bad request body (e.g. `months: 999`) | Field validation. `detail[0].msg` has the reason |
-| `502` | Groq / SerpApi / Hindsight failed, or a rate limit | "Couldn't analyse right now, try again shortly" — retriable |
+Every error is JSON: `{"detail": "<human-readable reason>", "error": "<kind>"}`.
+
+| Status | `error` | Meaning | What to show |
+|---|---|---|---|
+| `404` | `NothingToAnalyse` | Business not found, or every review was filtered out | "Couldn't find reviews for that business — try adding the city" |
+| `422` | — | Bad request body (e.g. `months: 999`, empty `name`) | Field validation. `detail[0].msg` has the reason |
+| `502` | `UpstreamError` | SerpApi / Places / Groq failed, or a rate limit | "Couldn't analyse right now, try again shortly" — retriable |
+| `503` | `ConfigError` | The server is missing an API key | "Service unavailable" — not retriable until the server is fixed |
+| `500` | `InternalError` | A bug | Generic error; the server log has the traceback |
+
+Hindsight being down is **not** an error: the analysis runs without past-run
+trends and says so in `warnings`.
 
 ### ⚠ These endpoints are slow — plan for it
 
@@ -289,7 +301,7 @@ For a mobile client:
 - **Show real progress**, not a spinner — "Finding reviews… / Filtering… /
   Scoring themes…" — or it reads as frozen.
 - **Don't fire it on every keystroke.** One call per explicit search.
-- **Cache by `(name, location, months)`.** Re-running the same business costs
+- **Cache by `(name, location, limit, months)`.** Re-running the same business costs
   real money in Groq tokens and SerpApi searches.
 
 If this becomes a problem, the fix is a job queue: `POST` returns a job id
@@ -309,13 +321,18 @@ Every run spends real quota, on three services:
 | Service | Free tier | Per run |
 |---|---|---|
 | Groq | 200,000 tokens/day | 1 call for themes + 1 per theme (~7–9 total) |
-| SerpApi | 250 searches/month | ~1 search per 20 reviews (6–9 typical) |
+| SerpApi | 250 searches/month | ~1 search per 20 reviews: up to 30 for the default 400 (fewer for small shops) |
 | Hindsight | — | 1 store + 1 recall per theme |
 
-Guards already in place: `--max-pages` caps SerpApi searches per run; `--months`
-stops paginating once reviews fall outside the window; the Checker is pure rules
-so filtering costs nothing; and the Scorer reads a *sample* to find themes, then
-matches locally.
+Guards already in place: `--max-pages` caps SerpApi searches per run; `--limit`
+stops paginating once enough reviews are in, and `--months` once they fall
+outside the window; API keys are checked *before* any paid call; the Checker is
+pure rules so filtering costs nothing; and the Scorer reads a random *sample* of
+50 verified reviews to find themes, so `themes[].count` is a count within that
+sample, not across all of them.
+
+At the 400-review default a busy shop can use 30 SerpApi searches, about 8 runs
+on the free tier. Pass a smaller `limit` (200 ≈ 11 searches) to stretch it.
 
 **If Groq's daily quota runs out**, the Analyst returns `score: 0` with
 `reasoning: "LLM unavailable, defaulted to neutral."` and `degraded: true`. The

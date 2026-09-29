@@ -51,7 +51,8 @@ def extract_themes(verified_reviews, rejected_count=0):
 
     sample = random.sample(verified_reviews, min(SAMPLE_SIZE, len(verified_reviews)))
     # Extract text from the cleaned review rows
-    reviews_text = [review.get("text", "")[:MAX_CHARS_PER_REVIEW] for review in sample if "text" in review]
+    reviews_text = [review["text"][:MAX_CHARS_PER_REVIEW] for review in sample
+                    if isinstance(review.get("text"), str)]
 
     prompt = f"""
     Analyze the following list of customer reviews and group them into distinct themes.

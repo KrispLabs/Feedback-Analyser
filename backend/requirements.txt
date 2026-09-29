@@ -2,3 +2,6 @@ hindsight-client
 groq
 fastapi
 uvicorn[standard]
+pandas
+google-play-scraper
+kagglehub

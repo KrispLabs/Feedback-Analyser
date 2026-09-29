@@ -4,7 +4,11 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      DATA_DIR: /data
+      KAGGLEHUB_CACHE: /data/raw/kagglehub
     volumes:
       - ./backend:/app
+      - ./data:/data
     ports:
       - "8000:8000"

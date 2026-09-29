@@ -1,0 +1,20 @@
+{
+  "business": "Telco",
+  "own": [
+    {
+      "type": "csv",
+      "kaggle": "beatafaron/telco-customer-churn-realistic-customer-feedback",
+      "file": "telco_churn_with_all_feedback.csv",
+      "columns": {"text": "CustomerFeedback", "author": "customerID"},
+      "keep": {"churn": "Churn", "tenure_months": "tenure", "contract": "Contract",
+               "internet_service": "InternetService", "monthly_charges": "MonthlyCharges",
+               "payment_method": "PaymentMethod"},
+      "simulate_dates": {"weeks": 12, "end": "2026-09-27"}
+    }
+  ],
+  "market": [
+    {"type": "playstore", "app_id": "com.vzw.hss.myverizon", "business": "Verizon", "country": "us", "limit": 2000},
+    {"type": "playstore", "app_id": "com.att.myWireless", "business": "AT&T", "country": "us", "limit": 2000},
+    {"type": "playstore", "app_id": "com.xfinity.digitalhome", "business": "Xfinity", "country": "us", "limit": 2000}
+  ]
+}

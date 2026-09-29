@@ -161,5 +161,35 @@ needing to read our code.
 - [x] Phase 2 — Hindsight memory layer (`backend/memory.py`)
 - [x] Phase 3 — Analyst + shared Groq helper (`backend/llm.py`, `backend/analyst.py`)
 - [x] Phase 4 — `run_week()` orchestrator (`backend/run_week.py`), verified end-to-end
-- [ ] Swap stubbed Gatherer/Scorer for teammates' real modules once pushed
+- [x] Real Gatherer pulled in from `sarthak` branch (`backend/gatherer/`) — see below
+- [ ] Swap `run_week()`'s stubbed gather/score for the real Gatherer + Scorer
 - [ ] Dashboard hookup
+
+## Gatherer (data) — `backend/gatherer/`
+Two branches per the flow diagram: `own` (real feedback about the business) and
+`market` (feedback on similar products). Sources: `csv` (Kaggle datasets, columns
+auto-detected), `playstore` (live, google-play-scraper), `appstore` (live, Apple RSS).
+
+```bash
+cd backend
+python -m gatherer inspect ../data/raw/some_kaggle.csv    # profile schema, suggest mapping
+python -m gatherer --config gatherer_config.json          # -> data/cleaned/reviews.csv
+```
+Output columns (Checker input): `id, source, origin, business, date, week, rating, text,
+title, author, url`. `rating` is always 1-5 (or empty), `date` is ISO, `week` is ISO week
+(`2026-W39`). `id` is a stable hash. For `run_week()`: `gatherer.load(week="2026-W39")`.
+Gatherer only drops rows with no text + exact same-id repeats; spam/dupe/gibberish
+filtering is left to Checker. Raw Kaggle files go in `data/raw/` (gitignored).
+
+### Current data (`backend/gatherer_config.json`)
+- **own = "Telco"**: Kaggle `beatafaron/telco-customer-churn-realistic-customer-feedback`,
+  file `telco_churn_with_all_feedback.csv` (7,043 rows; auto-downloaded via kagglehub).
+  Feedback text is LLM-generated from each IBM-Telco customer profile — fine for the
+  prototype, don't pitch it as real reviews. No rating, no date in the source:
+  `rating` is empty, dates are **simulated** (stable per row, spread over 12 weeks ending
+  2026-09-27, flagged `date_simulated=True`). Extra columns carried for the Analyst:
+  `churn, tenure_months, contract, internet_service, monthly_charges, payment_method`.
+- **market**: live Google Play (US) reviews for Verizon, AT&T, Xfinity — 2,000 each,
+  covers ~2026-07-10 .. 2026-09-27, real dates and 1-5 ratings.
+- Skipped: `telco_prep.csv` (same text lowercased) and `telco_noisy_feedback_prep.csv`
+  (75% missing text, half the rest truncated) — the noisy one could be a Checker test set.

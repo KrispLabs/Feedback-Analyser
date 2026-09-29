@@ -2,14 +2,18 @@
 past weeks so the Analyst can reason about trends across weeks."""
 
 import json
+import os
 
 from hindsight_client import Hindsight
 
 from config import load_keys
 
-BANK_ID = "feedback-analyser-v2"  # "feedback-analyser" holds Phase 1-4 mock test
-# memories (fake "login issues"/"dark mode" data) that contaminate recall for
-# real weeks -- see NOTES.md. v2 starts clean; never repoint this at v1.
+# "feedback-analyser" holds Phase 1-4 mock test memories (fake "login issues"/
+# "dark mode" data) that contaminate recall for real weeks -- see NOTES.md. v2
+# starts clean; never repoint production at v1. HINDSIGHT_BANK_ID overrides it
+# for experiments (scorer comparisons, demos) so they never write into the
+# production bank -- which is how that contamination got in twice already.
+BANK_ID = os.environ.get("HINDSIGHT_BANK_ID", "feedback-analyser-v2")
 BASE_URL = "https://api.hindsight.vectorize.io"
 
 

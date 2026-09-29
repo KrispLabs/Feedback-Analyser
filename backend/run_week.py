@@ -54,5 +54,16 @@ def run_week(week_number: int) -> dict:
 
 
 if __name__ == "__main__":
+    import argparse
+
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    print(json.dumps(run_week(1), indent=2))
+    ap = argparse.ArgumentParser(description="Run the full pipeline for one week.")
+    ap.add_argument("week", nargs="?", type=int, default=1,
+                    help="1-indexed into the ISO weeks the Gatherer produced (default: 1)")
+    ap.add_argument("--weeks", action="store_true", help="list available weeks and exit")
+    args = ap.parse_args()
+
+    if args.weeks:
+        print("\n".join(f"{i}: {w}" for i, w in enumerate(_available_weeks(), 1)))
+        sys.exit()
+    print(json.dumps(run_week(args.week), indent=2))

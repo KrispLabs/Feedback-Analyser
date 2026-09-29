@@ -171,6 +171,8 @@ section is the contract so it can be built against without needing to read our c
 - [x] Production Hindsight bank contamination found + fixed (see below)
 - [x] Karthik's real Scorer pulled in from the `Karthik` branch, replacing our own —
       found and fixed 5 real integration bugs against real data (see below)
+- [x] Shop Gatherer — reviews from a shop name + location (see below)
+- [x] End-to-end shop CLI (`analyse_shop.py`) verified on Cafe Niloufer, Hitech City
 - [ ] Dashboard hookup
 
 ## Gatherer (data) — `backend/gatherer/`
@@ -201,6 +203,157 @@ filtering is left to Checker. Raw Kaggle files go in `data/raw/` (gitignored).
   covers ~2026-07-10 .. 2026-09-27, real dates and 1-5 ratings.
 - Skipped: `telco_prep.csv` (same text lowercased) and `telco_noisy_feedback_prep.csv`
   (75% missing text, half the rest truncated) — the noisy one could be a Checker test set.
+
+## Shop Gatherer — reviews from a shop name + location (`backend/gatherer/sources/shop.py`)
+
+The Gatherer could only reach apps (Play Store / App Store) and offline CSVs. This adds
+physical shops: give it a name and a location and it resolves the place, pulls its Google
+reviews, and appends them to the same cleaned CSV database everything downstream reads.
+
+```bash
+cd backend
+python -m gatherer shop "Chai Point" "Banjara Hills, Hyderabad"
+python -m gatherer shop "Chai Point" "Hyderabad" --provider serpapi --limit 300
+python -m gatherer shop "Third Wave Coffee" "Hyderabad" --origin market   # a competitor
+```
+
+Nothing downstream changed — the source yields the same `Review` shape as every other
+source, so Checker → Scorer → Analyst → Hindsight → `POST /weeks/{n}/run` all work as-is.
+
+### Two providers (`--provider`)
+- **`places`** (default) — Google Places API (New). Official, no scraping, generous free
+  tier. **Google only ever returns 5 reviews per place**, so this proves the pipeline but
+  is too thin to demo on. Needs `GOOGLE_MAPS_API_KEY`.
+- **`serpapi`** — SerpApi's Google Maps scraper, paginated: hundreds of reviews per shop
+  with real ratings. 100 free searches/month. Needs `SERPAPI_API_KEY`.
+
+Keys resolve env → `keys.csv` → an `api_key` in the config, so it works the same in Docker
+and in local dev. A missing key raises at fetch time naming the exact variable, rather than
+at import — the other sources keep working without it.
+
+### Appending, not overwriting
+`python -m gatherer shop ...` **adds to** `data/cleaned/reviews.csv` (`--replace` to
+overwrite), so you can build a database one shop at a time. Review `id`s are stable hashes,
+so re-gathering the same shop updates its rows in place instead of duplicating them —
+verified: re-running the same shop twice leaves the row count unchanged.
+
+### Approximate dates
+SerpApi returns `iso_date` for most reviews but falls back to `"3 months ago"` phrasing for
+some. Those are converted to an approximate ISO date and flagged `date_approx=True` in the
+output. Deliberate: `run_week()` buckets by ISO week, and a review dated to roughly the
+right fortnight still lands in a week, whereas a review with no date gets an empty `week`
+and silently drops out of *every* weekly run.
+
+### Config-file form
+Works as a normal source alongside the existing ones, for shops you gather every week:
+```json
+{"business": "Chai Point",
+ "own":    [{"type": "shop", "name": "Chai Point", "location": "Banjara Hills, Hyderabad",
+             "provider": "serpapi", "limit": 300}],
+ "market": [{"type": "shop", "name": "Third Wave Coffee", "location": "Hyderabad"}]}
+```
+Ambiguous names (three branches in one city) resolve to Maps' first hit — pass
+`place_id` / `--place-id` to pin an exact branch.
+
+### Verified
+- All 8 checks in the stubbed end-to-end test pass: relative-date parsing (8 cases), the
+  missing-key error, both providers' response shapes, SerpApi pagination across pages,
+  `limit` stopping mid-page without wasting an API call, cleaned-CSV output with unique
+  16-char ids and a populated `week` on every row, append-dedupe on re-gather, and Checker
+  accepting the rows unchanged.
+- Both live endpoints reached with a deliberately invalid key: Google returns
+  `API_KEY_INVALID` (i.e. the request shape passed field validation), SerpApi returns 401.
+  **Not yet run against a real key — no `GOOGLE_MAPS_API_KEY`/`SERPAPI_API_KEY` available
+  in this environment.** Add one and the first real pull is the remaining check.
+- Gotcha on macOS: a bare venv has no root certificates, so every `urllib` source (this one
+  and `appstore.py`) fails with `CERTIFICATE_VERIFY_FAILED`. Fix with
+  `pip install certifi && export SSL_CERT_FILE=$(python -c "import certifi;print(certifi.where())")`,
+  or run the Docker image, which has system certs.
+
+### `--limit` counts usable reviews, not rows returned (fixed)
+
+First real run against Cafe Niloufer asked for 200 reviews and got 55, having spent
+~15 billable SerpApi searches. Not a pagination stall — most Google Maps reviews are
+star-only ratings with no text. Those get dropped by `finalise()` and are useless to the
+Checker, but `limit` was counting them, so the source paginated to 200 *rows* to reach 55
+*usable* ones and billed for the difference.
+
+Fixed three ways:
+- Reviews with no text are skipped before they count against `limit`, on both providers.
+- Pages 2+ now request `num=20` instead of the default 10. SerpApi rejects `num` on page
+  one (`"It always returns 8 results"`), so page one is left alone — same one search,
+  twice the reviews after that.
+- `max_pages` (default 15) hard-caps billable searches, so a shop whose reviews are almost
+  all star-only can't quietly drain a monthly quota. `--max-pages` raises it.
+
+Measured against the live API: **50 usable reviews for 6 billable searches (8.3 per
+search), up from 3.7** — 2.2x better. `source.pages_fetched` is reported by
+`analyse_shop.py` as the run's cost; it counts pages *requested*, and SerpApi doesn't bill
+repeat identical queries, so it reads as an upper bound. SerpApi free tier is 250
+searches/month.
+
+## End-to-end shop run — `backend/analyse_shop.py`
+
+One command takes a business name and location all the way to scored, reasoned themes:
+
+```bash
+python analyse_shop.py                                  # prompts for both
+python analyse_shop.py "Niloufer Cafe" "Hitech City"
+python analyse_shop.py "Niloufer Cafe" "Hitech City" --provider serpapi --limit 200
+```
+
+Same pipeline as `run_week()` (gather → check → score → analyze → store) but over one
+shop's whole review history rather than one ISO week, since a shop you've just looked up
+has no prior weeks to slice. `--run N` numbers the run so later runs recall earlier ones.
+
+**Verified end-to-end on real data (Cafe Niloufer, Hitech City — 4.3★, 8,570 reviews):**
+55 gathered → 44 verified (11 `too_short`) → 8 themes → all 8 scored by Groq with real
+reasoning, no fallbacks. Results were domain-plausible: **tea quality praised +5** and
+**tea quality criticized −4** (the chai is both the best thing and the most complained
+about), crowded −3, over-priced −3, ambience +3.
+
+Two notes from that run:
+- Give each business its own Hindsight bank (`HINDSIGHT_BANK_ID=niloufer-cafe`). The
+  production bank holds Telco themes; mixing a cafe into it recreates the contamination
+  bug twice-fixed above.
+- Give each business its own Hindsight bank (see above).
+
+### Recency window — `--months` (default: last 3 months)
+
+A popular shop has years of reviews; only recent ones say what to fix now. `--months N`
+keeps reviews from the last N months (`--months 0` = all time), and because the default
+sort is newest-first the shop source **stops paginating once a whole page predates the
+cutoff** — the window saves billable searches instead of discarding pages already paid
+for. Verified: a 5-page fixture with a 2-page window stops after 3 pages. Early-stop only
+applies to `sort=newest`; any other sort filters but walks every page, since rating order
+says nothing about dates. Reviews whose only date is relative ("2 weeks ago") are kept and
+flagged `date_approx`.
+
+`--since` does the same on the raw gatherer CLI (`python -m gatherer shop ... --since`).
+
+## Analyst prompt made business-generic (`backend/analyst.py`)
+
+The prompt said "Apply the same logic to **app** feedback themes", and against Cafe
+Niloufer it showed: the tea shop's advice referenced "the app", "UI design" and "users",
+and described 11 months of reviews as "this week". Fixed:
+- The scale section now names the business type explicitly and forbids app language
+  unless the reviews use it themselves.
+- `analyze_theme()` / `analyze_week()` take `business` and `period`, so the model is told
+  *"Business: Niloufer Cafe, Hitech City / Period covered: 2026-07-18 to 2026-09-28"*
+  instead of inferring a week. Both default to the old weekly framing, so `run_week()`'s
+  call site is unchanged.
+
+**Verified on a real re-run** (run 2, 3-month window, 39 verified reviews): a grep for
+`the app|UI design|UI/UX|release|sprint|hotfix` across the whole output returned **zero
+matches**, where run 1 had several. Themes came back in the shop's own language —
+*Excellent Irani Chai and Bun Maska +4*, *Pleasant Ambience +4*, *Crowded Space −4*,
+*Expensive Pricing −3*, *Perceived Overhype / Overrated −3*.
+
+**Cross-run Hindsight recall proven on a real business**: run 2's reasoning cites run 1's
+actual figures — "flagged in 10 reviews during the first week of September and again in
+this period with 5 mentions" (crowding, 10 → 5) and "aligns with prior runs where nine
+users flagged pricing" (pricing, 9). The Analyst is genuinely comparing runs, not
+restating one batch.
 
 ## Wiring the real Gatherer into run_week()
 

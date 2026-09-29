@@ -100,17 +100,53 @@ def summarise(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def run(config_path: str, out: Path = DEFAULT_OUT, **kw) -> pd.DataFrame:
+def write(df: pd.DataFrame, out: Path = DEFAULT_OUT, append: bool = False) -> pd.DataFrame:
+    """Write the cleaned table, and return what's now on disk.
+
+    append=True merges into whatever is already there and drops repeat ids, so
+    gathering a second shop adds to the database instead of replacing it (ids
+    are stable hashes, so re-gathering the same shop updates in place rather
+    than duplicating)."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if append and out.exists():
+        old = pd.read_csv(out, dtype={"id": str, "week": str, "date": str}, keep_default_na=False)
+        df = (pd.concat([old, df], ignore_index=True)
+                .drop_duplicates(subset="id", keep="last")
+                .sort_values(["date", "source"], ascending=[False, True])
+                .reset_index(drop=True))
+    df.to_csv(out, index=False)
+    return df
+
+
+def run_sources(sources: list[Source], out: Path = DEFAULT_OUT, append: bool = False,
+                **kw) -> pd.DataFrame:
+    df = gather(sources, **kw)
+    print(summarise(df))
+    full = write(df, out, append=append)
+    print(f"-> {out}" + (f" ({len(full)} reviews in the database)" if append else ""))
+    return full
+
+
+def run(config_path: str, out: Path = DEFAULT_OUT, append: bool = False, **kw) -> pd.DataFrame:
     config_path = Path(config_path)
     config = json.loads(config_path.read_text())
     sources = build_sources(config, base_dir=config_path.parent)
     print(f"Gathering for {config.get('business')!r} from {len(sources)} source(s)")
-    df = gather(sources, **kw)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out, index=False)
-    print(summarise(df))
-    print(f"-> {out}")
-    return df
+    return run_sources(sources, out=out, append=append, **kw)
+
+
+def run_shop(name: str, location: str = "", out: Path = DEFAULT_OUT, append: bool = True,
+             min_chars: int = 1, since: str | None = None, until: str | None = None,
+             **shop_kw) -> pd.DataFrame:
+    """One shop by name + location -> reviews appended to the CSV database.
+
+    `since` goes to the source as well as the row filter: newest-first, the shop
+    source stops paginating once a page predates it, so a date window saves
+    billable searches instead of just discarding what it already paid for."""
+    source = REGISTRY["shop"](name=name, location=location, since=since, **shop_kw)
+    print(f"Gathering reviews for {source!r}")
+    return run_sources([source], out=out, append=append, min_chars=min_chars,
+                       since=since, until=until)
 
 
 if __name__ == "__main__":

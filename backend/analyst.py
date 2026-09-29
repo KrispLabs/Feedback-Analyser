@@ -1,5 +1,11 @@
 """Analyst: explains why each theme's score is what it is and what to do
-next, using this week's scored themes plus Hindsight's memory of past weeks.
+next, using this run's scored themes plus Hindsight's memory of past runs.
+
+The business is whatever the Gatherer pulled feedback for -- a mobile app, a
+telecom provider, a cafe. The prompt used to say "app feedback themes", and it
+showed: analysing Cafe Niloufer produced advice about "the app" and "UI design"
+for a tea shop. It is written neutrally now, and the caller passes the business
+name and the period the data covers so the model stops assuming "this week".
 
 Score scale: -5 to +5, like a business owner triaging feedback.
   +5 = the single thing we're best at right now (keep doing it).
@@ -13,7 +19,7 @@ import json
 from llm import call_llm
 from memory import HindsightMemory
 
-SYSTEM_PROMPT = """You are an Analyst that scores product feedback themes on a \
+SYSTEM_PROMPT = """You are an Analyst that scores customer-feedback themes on a \
 scale from -5 to +5, the way a small business owner would triage feedback.
 
 Think of it like running a bakery:
@@ -22,14 +28,19 @@ Think of it like running a bakery:
 - "seating is a bit cramped on weekends" -> -2 (a real complaint, but low priority)
 - "health inspector found mold in the display case" -> -5 (fix this before anything else, instantly)
 
-Apply the same logic to app feedback themes:
-- +5: the single theme the product is best at right now.
+Apply the same logic to whatever business you are given. It may be a cafe, a shop, a
+telecom provider or a mobile app — you are told which. Write about THAT business and
+the things its customers actually mention. Never assume it is an app: do not refer to
+"the app", "users", "releases" or "UI" unless the reviews themselves do.
+
+- +5: the single thing the business is best at right now.
 - +1 to +4: other genuine strengths, ranked by importance (closer to +5 = more important to protect).
 - -1 to -4: real problems, ranked by urgency (closer to -5 = fix sooner).
-- -5: the single most urgent problem — the user must work on this instantly, before anything else.
+- -5: the single most urgent problem — the owner must work on this instantly, before anything else.
 
-For the theme you are given, respond with ONLY a JSON object:
-{"score": <int -5..5>, "reasoning": "<why this score, referencing the review data and any past-week trend you were given, e.g. 'this has been the top complaint for 3 weeks straight'>", "next_step": "<if score is negative: a concrete, prioritized action; if positive: what to keep doing/protect>"}"""
+Describe the data using the period you are given, not "this week" unless that is the
+period. For the theme you are given, respond with ONLY a JSON object:
+{"score": <int -5..5>, "reasoning": "<why this score, referencing the review data and any past-run trend you were given, e.g. 'this has been the top complaint for 3 runs straight'>", "next_step": "<if score is negative: a concrete, prioritized action the owner can take; if positive: what to keep doing/protect>"}"""
 
 FALLBACK = json.dumps(
     {
@@ -40,16 +51,19 @@ FALLBACK = json.dumps(
 )
 
 
-def analyze_theme(theme: dict, memory: HindsightMemory) -> dict:
-    past_context = memory.recall_context(f"past weeks feedback about {theme['name']}")
-    context_block = "\n".join(f"- {c}" for c in past_context) or "No past weeks recorded yet."
+def analyze_theme(theme: dict, memory: HindsightMemory, business: str = "",
+                  period: str = "this week") -> dict:
+    past_context = memory.recall_context(f"past feedback about {theme['name']}")
+    context_block = "\n".join(f"- {c}" for c in past_context) or "No past runs recorded yet."
 
     samples = "\n".join(f"- {s}" for s in theme.get("samples", []))
     user_prompt = (
+        (f"Business: {business}\n" if business else "")
+        + f"Period covered: {period}\n"
         f"Theme: {theme['name']}\n"
-        f"Mentions this week: {theme.get('count')}\n"
+        f"Mentions in this period: {theme.get('count')}\n"
         f"Sample reviews:\n{samples}\n\n"
-        f"Relevant memory from past weeks:\n{context_block}"
+        f"Relevant memory from past runs:\n{context_block}"
     )
 
     raw = call_llm(SYSTEM_PROMPT, user_prompt, fallback=FALLBACK)
@@ -62,8 +76,11 @@ def analyze_theme(theme: dict, memory: HindsightMemory) -> dict:
     return {**theme, **result}
 
 
-def analyze_week(themes: list[dict], memory: HindsightMemory) -> list[dict]:
-    return [analyze_theme(theme, memory) for theme in themes]
+def analyze_week(themes: list[dict], memory: HindsightMemory, business: str = "",
+                 period: str = "this week") -> list[dict]:
+    """business/period default to run_week()'s weekly framing, so its existing
+    call site is unchanged; analyse_shop.py passes a shop name and date span."""
+    return [analyze_theme(theme, memory, business, period) for theme in themes]
 
 
 if __name__ == "__main__":

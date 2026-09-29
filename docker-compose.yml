@@ -7,8 +7,10 @@ services:
     environment:
       DATA_DIR: /data
       KAGGLEHUB_CACHE: /data/raw/kagglehub
+      FRONTEND_DIR: /frontend
     volumes:
       - ./backend:/app
       - ./data:/data
+      - ./frontend:/frontend:ro
     ports:
       - "8000:8000"

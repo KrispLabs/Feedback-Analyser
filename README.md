@@ -314,6 +314,30 @@ the real frontend origin before shipping** (`backend/api.py`).
 
 ---
 
+## Dashboard — `frontend/`
+
+The API serves the dashboard at its root, so once it is running just open
+**http://localhost:8000/** (same origin, no CORS setup). It is plain HTML, CSS
+and JS with no build step. `docker compose up` mounts it too.
+
+- **Business lookup** calls `POST /shops/analyse`; **Gathered weeks** calls
+  `POST /weeks/{n}/run`. `GET /health` drives the API status chip in the nav.
+- Themes come back sorted worst first and split into *Fix these* / *Protect
+  these*. A `degraded` theme is flagged *not scored* instead of shown as a real
+  0, and `warnings` appear as a banner above the briefing.
+- Every result is saved in the browser (`localStorage`), per business. That
+  gives the run timeline, run-over-run comparison and the next `run_number`
+  without re-spending quota. It only knows runs made from that browser;
+  Hindsight still recalls runs made from the CLI.
+- *Ask about this run* answers from the result on screen. It makes no API call.
+- Progress during a run is estimated from typical timings, since the API has
+  no progress endpoint.
+- *Preview with example data* loads a fictional café in the exact response
+  shape, for trying the UI without keys. It is never saved.
+- To point the page at an API on another address, add `?api=http://host:8000`.
+
+---
+
 ## Cost and limits
 
 Every run spends real quota, on three services:
@@ -365,6 +389,7 @@ backend/
   memory.py            Hindsight store / recall
   llm.py               shared Groq helper: retries, rate-limit backoff, fallbacks
   config.py            key loading (env → keys.csv)
+frontend/              dashboard served by api.py at /
 data/cleaned/          gathered reviews (gitignored)
 NOTES.md               engineering log: decisions, bugs found, what's verified
 ```

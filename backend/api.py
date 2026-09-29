@@ -9,13 +9,19 @@ analyze -> store):
 Both are slow by design -- they scrape reviews and then make one Groq call per
 theme, so 60-120s is normal. See README.md for how a mobile client should
 handle that.
+
+The dashboard in ../frontend is served at / from the same origin, so opening
+http://localhost:8000/ needs no CORS setup.
 """
 
 import logging
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from analyse_shop import DEFAULT_LIMIT, analyse_shop
@@ -99,3 +105,10 @@ def run(week_number: int, business: str | None = None):
     scores, reasoning, next steps. `business` defaults to the one in
     gatherer_config.json; competitor (market) reviews are never mixed in."""
     return run_week(week_number, business)
+
+
+# Mounted last so it never shadows an API route or /docs. FRONTEND_DIR points
+# Docker at its mounted copy, since the image is built from backend/ only.
+FRONTEND_DIR = Path(os.environ.get("FRONTEND_DIR", Path(__file__).resolve().parent.parent / "frontend"))
+if FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

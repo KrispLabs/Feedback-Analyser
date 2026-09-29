@@ -57,7 +57,13 @@ class HindsightMemory:
 
 
 if __name__ == "__main__":
-    with HindsightMemory() as memory:
+    # A dedicated test bank -- NEVER the default/production bank here. Running
+    # this file previously wrote a fake "login issues" memory straight into
+    # feedback-analyser-v2, contaminating real recall the same way the
+    # original feedback-analyser bank was contaminated (see NOTES.md).
+    TEST_BANK_ID = "feedback-analyser-selftest"
+
+    with HindsightMemory(bank_id=TEST_BANK_ID) as memory:
         memory.store_week(
             1,
             {

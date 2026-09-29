@@ -9,7 +9,15 @@ equal to completion_tokens) -- discovered when the Scorer's theme-discovery
 call returned "" for real data. reasoning_effort="low" plus an explicit
 max_tokens fixes it and also matters for cost: our Groq plan caps at 8,000
 tokens PER MINUTE, shared across every call in one run_week() execution, so
-low reasoning effort keeps each call's token usage well within budget."""
+low reasoning effort keeps each call's token usage well within budget.
+
+Groq also enforces a separate, much bigger cap: 200,000 tokens PER DAY. Once
+that's exhausted, a 429's Retry-After can be tens of minutes (the time until
+midnight UTC-ish reset), not seconds -- discovered when a routine test
+appeared to hang for 4+ minutes. Blindly sleeping for whatever Retry-After
+says (the original fix here) is correct for the per-minute limit but a bad
+idea for the daily one: nothing recovers by waiting 25 minutes inside a
+single function call. See MAX_RATE_LIMIT_WAIT below."""
 
 import time
 
@@ -20,6 +28,7 @@ from config import load_keys
 MODEL = "openai/gpt-oss-120b"
 MAX_TOKENS = 1500
 RATE_LIMIT_FALLBACK_WAIT = 20  # seconds, used when Groq doesn't send Retry-After
+MAX_RATE_LIMIT_WAIT = 30  # never sleep longer than this even if Retry-After asks for more
 
 
 def call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3, fallback: str | None = None) -> str:
@@ -29,7 +38,9 @@ def call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3, fallbac
     rare edge case. The generic exponential backoff below (max ~7s across 3
     attempts) isn't enough to outlast a per-minute window resetting, so a
     RateLimitError gets its own longer wait, honoring the server's
-    Retry-After header when it sends one."""
+    Retry-After header -- but capped at MAX_RATE_LIMIT_WAIT: if Groq asks for
+    longer than that, retrying won't help within this call (daily quota, not
+    a per-minute window), so fail fast to the fallback instead of hanging."""
     client = Groq(api_key=load_keys()["GROQ_API_KEY"])
     last_error = None
 
@@ -48,9 +59,12 @@ def call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3, fallbac
             return response.choices[0].message.content
         except RateLimitError as e:
             last_error = e
+            retry_after = e.response.headers.get("retry-after")
+            wait = float(retry_after) if retry_after else RATE_LIMIT_FALLBACK_WAIT
+            if wait > MAX_RATE_LIMIT_WAIT:
+                break  # daily-quota-scale wait -- retrying here is futile, fail fast
             if attempt < max_retries - 1:
-                retry_after = e.response.headers.get("retry-after")
-                time.sleep(float(retry_after) if retry_after else RATE_LIMIT_FALLBACK_WAIT)
+                time.sleep(wait)
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:

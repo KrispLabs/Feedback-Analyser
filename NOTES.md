@@ -462,6 +462,50 @@ by re-running `run_week(1)` twice in a row: the second run's reasoning correctly
 consistently the top complaint for multiple weeks"), no phantom login references.
 **`feedback-analyser` (no suffix) is permanently stale — never repoint production at it.**
 
+## Full system verification pass — 2 more bugs found and fixed
+
+Ran every module standalone plus the full pipeline and the API, specifically to answer
+"does this actually work" rather than assume it from earlier partial tests.
+
+- **Checker** (`python checker.py`): ✅ correct, 6/12 verified on the mock set, unchanged.
+- **Memory** (`python memory.py`): found a real bug — its own `__main__` self-test wrote a
+  fake "login issues" memory straight into the **production** bank (`feedback-analyser-v2`)
+  every time it ran, silently re-creating the exact contamination problem fixed above.
+  Fixed: the self-test now uses a dedicated `feedback-analyser-selftest` bank. Re-verified
+  clean afterward.
+- **Analyst** (`python analyst.py`): only reads via `recall_context`, never writes, so it
+  was never a contamination risk — but running it surfaced two much bigger problems below.
+- **Scorer** (Karthik's, on mock data): ✅ correct, 3 coherent themes.
+- **`run_week()` end-to-end on real data:** Checker stage still correct (24 rejected), but
+  the Scorer's discovery call returned `[]` — see quota exhaustion below.
+- **API `GET /health`:** ✅ 200 `{"status": "ok"}`, no Groq dependency, unaffected by
+  anything below.
+
+**Bug found — `analyst.py`'s standalone test appeared to hang for 4+ minutes.** Investigated
+properly rather than just waiting: the process had near-zero CPU time despite minutes of
+wall-clock time (blocked on I/O, not looping), and had live connections to both Groq and
+Hindsight. Traced to the actual root cause by reproducing the exact call: **we had
+exhausted our Groq plan's 200,000-tokens-PER-DAY quota** (`Used 198530, Requested 5010`)
+from this session's extensive testing, and Groq's 429 said "try again in 25m29s". The
+rate-limit fix from the previous round was *correctly* honoring that `Retry-After` value —
+it just hadn't been tested against the daily cap (only the per-minute one), so a 25-minute
+wait inside one function call looked exactly like a hang from the outside.
+
+**Fix:** added `MAX_RATE_LIMIT_WAIT = 30` to `llm.py` — if `Retry-After` asks for longer
+than that, retrying inside this call is futile (it's a daily quota, not a per-minute
+window), so it now fails fast to the fallback instead of sleeping for however long Groq
+asks. Verified: a `call_llm` test that previously would have hung now returns in ~1.5s
+even while still rate-limited.
+
+**Observed under quota exhaustion (worth knowing before a live demo):** with almost no
+daily quota left, `run_week(1)` completed quickly and did **not** crash or hang — but
+`extract_themes` returned `[]` indistinguishable from "genuinely found no themes." A judge
+or teammate watching a demo mid-quota-exhaustion would see an empty result with no
+indication *why*. Not fixed here (would mean changing Karthik's fallback contract, and we
+were nearly out of quota to test a fix against), but flagged: if this matters for the demo,
+`extract_themes`/`call_llm` should surface a distinguishable "temporarily unavailable"
+state rather than a silently-empty one.
+
 ## Critical Checker bug found on real data (fixed)
 
 Running the Checker on the first 300 real reviews rejected **all 300** as "gibberish" —

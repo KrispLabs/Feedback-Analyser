@@ -4,8 +4,8 @@ dashboard.
 
 Gather uses the real Gatherer (backend/gatherer/, pulled in from the sarthak
 branch): Telco customer feedback + Verizon/AT&T/Xfinity Play Store reviews,
-see NOTES.md. Score uses our own scorer.py (LLM-based theme discovery) since
-no separate Scorer teammate branch exists yet."""
+see NOTES.md. Score uses Karthik's real scorer.py (LLM-based theme
+discovery), pulled in from the Karthik branch."""
 
 import json
 import sys
@@ -16,7 +16,7 @@ from analyst import analyze_week
 from checker import check_reviews
 from gatherer.gatherer import DEFAULT_OUT, load as load_gathered
 from memory import HindsightMemory
-from scorer import score_themes
+from scorer import extract_themes
 
 
 def _available_weeks() -> list[str]:
@@ -38,7 +38,7 @@ def gather_week(week_number: int) -> list[dict]:
 def run_week(week_number: int) -> dict:
     raw_reviews = gather_week(week_number)
     verified, rejected_count, rejected_by_reason = check_reviews(raw_reviews)
-    themes = score_themes(verified)
+    themes = extract_themes(verified, rejected_count)
 
     with HindsightMemory() as memory:
         analyzed_themes = analyze_week(themes, memory)

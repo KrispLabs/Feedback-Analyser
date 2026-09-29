@@ -108,9 +108,9 @@ teammates push them; end-to-end test across all 4 demo weeks; dashboard hookup.
 
 ## App API (for the frontend)
 
-This project is becoming a mobile app, targeting **Android and iOS** — a friend owns the
-frontend, we own the backend. The frontend is not our job; this section is the contract
-so it can be built against without needing to read our code.
+This project is becoming a **webapp** (corrected — earlier noted as Android/iOS, that was
+wrong) — a friend owns the frontend, we own the backend. The frontend is not our job; this
+section is the contract so it can be built against without needing to read our code.
 
 - `backend/api.py`: FastAPI wrapper around `run_week()`. Runs on port 8000
   (`uvicorn api:app --host 0.0.0.0 --port 8000`, or via `docker compose up`).
@@ -166,9 +166,11 @@ so it can be built against without needing to read our code.
       pending the real Scorer)
 - [x] Critical Checker bug found + fixed against real data (see below)
 - [x] Cross-batch Hindsight learning proven against real data (see below)
-- [x] Real Scorer built (`backend/scorer.py`) — LLM-based theme discovery, no
-      separate Scorer teammate branch exists yet (see below)
+- [x] Real Scorer built by us (`backend/scorer.py`) — LLM-based theme discovery,
+      before a separate Scorer teammate branch existed
 - [x] Production Hindsight bank contamination found + fixed (see below)
+- [x] Karthik's real Scorer pulled in from the `Karthik` branch, replacing our own —
+      found and fixed 5 real integration bugs against real data (see below)
 - [ ] Dashboard hookup
 
 ## Gatherer (data) — `backend/gatherer/`
@@ -207,23 +209,78 @@ frontend doesn't change) but now resolves `week_number` to the Nth chronological
 present in `data/cleaned/reviews.csv` (1 = earliest week gathered), loads it via
 `gatherer.load()`, and runs the real pipeline on it.
 
-## The real Scorer (`backend/scorer.py`)
+## Our own placeholder Scorer (superseded by Karthik's real one, kept for history)
 
-No separate Scorer teammate branch exists yet (only `sarthak` for the Gatherer). Since
-numeric scoring (-5..+5) is the Analyst's job, not the Scorer's, the Scorer's actual
-remaining job is just theme discovery — group reviews, count mentions, keep samples. We
-built this ourselves rather than keep hand-writing keyword lists per dataset:
-- `discover_themes()` samples up to 60 reviews and asks Groq to identify up to 5 recurring
+No separate Scorer teammate branch existed yet at this point (only `sarthak` for the
+Gatherer). Since numeric scoring (-5..+5) is the Analyst's job, not the Scorer's, the
+Scorer's actual remaining job is just theme discovery — group reviews, count mentions,
+keep samples. We built a placeholder ourselves rather than keep hand-writing keyword lists
+per dataset:
+- `discover_themes()` sampled up to 60 reviews and asked Groq to identify up to 5 recurring
   themes with a name + matching keywords.
-- `score_themes()` uses those LLM-discovered keywords to locally match *all* verified
-  reviews to a theme (cheap — no LLM call per review) and returns
+- `score_themes()` used those LLM-discovered keywords to locally match *all* verified
+  reviews to a theme (cheap — no LLM call per review) and returned
   `[{"name", "count", "samples"}, ...]`.
-- This replaces the earlier hardcoded `THEME_KEYWORDS` dict (written for imaginary mock
-  data — "login issues", "dark mode" — which don't match real Telco feedback at all) with
-  something that generalizes to any dataset.
 - Verified against real week-1 data: discovered `payment preferences`, `pricing
   perception`, `service quality`, `contract flexibility`, `churn and switching` — all
   genuinely relevant Telco/ISP themes, none hardcoded.
+- Replaced entirely once Karthik's Scorer landed (below) — the function name
+  `score_themes` no longer exists in `backend/scorer.py`.
+
+## Karthik's real Scorer (`backend/scorer.py`, from the `Karthik` branch)
+
+Karthik pushed `scorer.py` — one function, `extract_themes(verified_reviews,
+rejected_count)`, sending the whole review list to Groq in one prompt and asking for
+`[{"name", "count", "samples"}, ...]` directly, with schema validation on the response.
+Good design (matches the interface exactly, defensive validation), but 3 real bugs
+surfaced testing it against real data — the same pattern as the Gatherer/Checker
+integrations: looks correct on paper, breaks at real scale.
+
+**Bug 1 — wrong import path.** `from backend.llm import call_llm` assumes `backend` is an
+importable package from the repo root; our actual layout runs flat from inside `backend/`
+(every other module imports `from llm import call_llm`). Fixed by matching our layout.
+
+**Bug 2 — wrong `call_llm` signature.** Karthik called `call_llm(prompt)` with one
+argument; our shared `call_llm(system_prompt, user_prompt, ...)` requires two, so this
+raised `TypeError` immediately. Fixed by adding a system prompt.
+
+**Bug 3 — sends every review in one prompt, no sampling.** Ran against real week-1 data
+(604 reviews) and hit a hard Groq `413`: `Request too large ... tokens per minute (TPM):
+Limit 8000, Requested 51985`. Our Groq plan caps at **8,000 tokens per minute, shared
+across every call in one `run_week()` run** (the Scorer's discovery call plus one Analyst
+call per theme) — any week above roughly a few dozen reviews will always blow this budget,
+and `call_llm`'s own fallback swallows the exception into a silent empty result with no
+visible error. Fixed by sampling verified reviews down to a token-safe budget (50 reviews,
+truncated to 150 chars each) before building the prompt. Tradeoff, documented in
+`scorer.py`: `"count"` is now based on the sample, not an exact count across every
+verified review that week — fine for relative theme importance, not a precise total.
+
+**Bug 4 (found while fixing #3, but really a shared `llm.py` bug) — reasoning model empty
+output.** Even after sampling, `extract_themes` still returned `[]`. Debugging the raw Groq
+response showed `finish_reason: "length"` with `reasoning_tokens` almost equal to
+`completion_tokens` — `openai/gpt-oss-120b` is a reasoning model that spends completion
+tokens on hidden chain-of-thought before writing an answer, and with no cap it burned the
+*entire* completion budget on reasoning, leaving zero tokens for the actual JSON. Fixed in
+the **shared `llm.py`** (not just `scorer.py`, since the Analyst uses the same model and is
+equally exposed, it just hadn't hit a long-enough prompt to trigger it yet): added
+`reasoning_effort="low"` and an explicit `max_tokens=1500` to the Groq call.
+
+**Bug 5 (also found during this pass) — model occasionally spells out numbers.** Even with
+the above fixed, `extract_themes` was still flaky — some runs returned `[]`. Root cause:
+the model sometimes writes `"count": seventy` instead of a digit, which breaks
+`json.loads()` *after* `call_llm` already succeeded, so `call_llm`'s own retries never see
+it. Fixed by tightening the prompt ("written as a plain digit... never spelled out as a
+word") and adding a retry loop around the parse step itself in `scorer.py`, not just around
+the API call.
+
+**Verified end-to-end after all 5 fixes:** ran `run_week(1)` on real week-1 data (580
+verified reviews) — Karthik's Scorer discovered **10** real themes (overall
+satisfaction/loyalty, monthly charges, service reliability, contract preference, churn,
+payment methods, customer support, mobile app usability, activation issues, security/phone
+plan), and the Analyst scored and reasoned over every one of them correctly, including
+citing real cross-week figures ("403 overall", "355 churn reports") with no contamination.
+`run_week.py` and `demo_hindsight_learning.py` (now on bank `feedback-analyser-real-demo-v4`)
+both call `extract_themes` in place of our retired `score_themes`.
 
 ## Production Hindsight bank contamination (found + fixed)
 
@@ -231,7 +288,7 @@ Running the real pipeline end-to-end surfaced a second instance of the contamina
 from the batch-learning demo — but this time in **production**, not a test script. The
 Analyst's reasoning for real week-1 data referenced "login crashes (-5)" and "login
 stability" even though no login theme existed anywhere in that week's real data. Cause:
-`run_week()` (and therefore the live `POST /weeks/{n}/run` API endpoint the mobile app will
+`run_week()` (and therefore the live `POST /weeks/{n}/run` API endpoint the webapp will
 call) used the default Hindsight bank (`feedback-analyser`), which still held every mock
 memory written during Phases 2-4 testing (fake "login issues"/"dark mode" data). Fixed by
 moving the production `BANK_ID` in `memory.py` to `feedback-analyser-v2` — confirmed clean

@@ -168,14 +168,14 @@
             <label class="tick" title="Also read what customers say about similar places nearby, so each theme is scored against the local market"><input type="checkbox" id="fCompare" checked><span>Compare with competitors</span></label>
           </div>
           <div class="rf-grid">
-            <div class="fld f-name" data-for="shop"><label for="fName">Business name</label><input class="txt" id="fName" autocomplete="off" placeholder="Niloufer Cafe"></div>
-            <div class="fld f-loc" data-for="shop"><label for="fLoc">Location</label><input class="txt" id="fLoc" autocomplete="off" placeholder="Hitech City, Hyderabad"></div>
+            <div class="fld f-name" data-for="shop"><label for="fName">Business name</label><input class="txt" id="fName" autocomplete="off"></div>
+            <div class="fld f-loc" data-for="shop"><label for="fLoc">Location</label><input class="txt" id="fLoc" autocomplete="off"></div>
             <div class="fld f-mon" data-for="shop"><label for="fMonths">Max age <output id="oMonths" for="fMonths"></output></label><input type="range" id="fMonths" min="0" max="24" step="1" value="0"></div>
             <div class="fld f-lim" data-for="shop"><label for="fLimit">Newest reviews <output id="oLimit" for="fLimit"></output></label><input type="range" id="fLimit" min="10" max="1000" step="10" value="400"></div>
             <div class="fld f-run" data-for="shop"><label for="fRun">Run #</label><input class="txt" id="fRun" type="number" min="1" step="1" value="1"></div>
-            <div class="fld f-biz" data-for="week" hidden><label for="fBiz">Business</label><input class="txt" id="fBiz" autocomplete="off" placeholder="Leave blank for the one in gatherer_config.json"></div>
+            <div class="fld f-biz" data-for="week" hidden><label for="fBiz">Business</label><input class="txt" id="fBiz" title="Leave blank for the business in gatherer_config.json" autocomplete="off"></div>
             <div class="fld f-week" data-for="week" hidden><label for="fWeek">Week #</label><input class="txt" id="fWeek" type="number" min="1" step="1" value="1"></div>
-            <div class="fld f-comp" data-for="shop"><label for="fComp">Competitors <output>optional · separate with ;</output></label><input class="txt" id="fComp" autocomplete="off" placeholder="Leave blank to find the 3 busiest similar places nearby, or: Chai Point; Cafe Bahar, Basheerbagh"></div>
+            <div class="fld f-comp" data-for="shop"><label for="fComp">Competitors <output>optional · separate with ;</output></label><input class="txt" id="fComp" title="Leave blank to find the 3 busiest similar places nearby, or name them, e.g. Chai Point; Cafe Bahar, Basheerbagh" autocomplete="off"></div>
           </div>
           <p class="rf-msg" id="rfMsg" role="status" hidden></p>
           <div class="recent" id="recent" hidden></div>

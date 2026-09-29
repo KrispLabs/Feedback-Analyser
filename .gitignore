@@ -1,5 +1,6 @@
 keys.csv
 .env
+*.docx
 node_modules/
 __pycache__/
 venv/

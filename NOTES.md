@@ -166,7 +166,9 @@ so it can be built against without needing to read our code.
       pending the real Scorer)
 - [x] Critical Checker bug found + fixed against real data (see below)
 - [x] Cross-batch Hindsight learning proven against real data (see below)
-- [ ] Swap `run_week()`'s stubbed score for the real Scorer
+- [x] Real Scorer built (`backend/scorer.py`) — LLM-based theme discovery, no
+      separate Scorer teammate branch exists yet (see below)
+- [x] Production Hindsight bank contamination found + fixed (see below)
 - [ ] Dashboard hookup
 
 ## Gatherer (data) — `backend/gatherer/`
@@ -203,10 +205,40 @@ filtering is left to Checker. Raw Kaggle files go in `data/raw/` (gitignored).
 `run_week(week_number)` keeps its existing integer interface (so the API contract for the
 frontend doesn't change) but now resolves `week_number` to the Nth chronological ISO week
 present in `data/cleaned/reviews.csv` (1 = earliest week gathered), loads it via
-`gatherer.load()`, and runs the real pipeline on it. `stub_score_themes` was updated with
-keywords relevant to this actual Telco/ISP domain (billing & pricing, internet reliability,
-customer service, app login issues) — the old placeholder keywords (login/dark mode) were
-written against imaginary mock data and don't match real Telco feedback at all.
+`gatherer.load()`, and runs the real pipeline on it.
+
+## The real Scorer (`backend/scorer.py`)
+
+No separate Scorer teammate branch exists yet (only `sarthak` for the Gatherer). Since
+numeric scoring (-5..+5) is the Analyst's job, not the Scorer's, the Scorer's actual
+remaining job is just theme discovery — group reviews, count mentions, keep samples. We
+built this ourselves rather than keep hand-writing keyword lists per dataset:
+- `discover_themes()` samples up to 60 reviews and asks Groq to identify up to 5 recurring
+  themes with a name + matching keywords.
+- `score_themes()` uses those LLM-discovered keywords to locally match *all* verified
+  reviews to a theme (cheap — no LLM call per review) and returns
+  `[{"name", "count", "samples"}, ...]`.
+- This replaces the earlier hardcoded `THEME_KEYWORDS` dict (written for imaginary mock
+  data — "login issues", "dark mode" — which don't match real Telco feedback at all) with
+  something that generalizes to any dataset.
+- Verified against real week-1 data: discovered `payment preferences`, `pricing
+  perception`, `service quality`, `contract flexibility`, `churn and switching` — all
+  genuinely relevant Telco/ISP themes, none hardcoded.
+
+## Production Hindsight bank contamination (found + fixed)
+
+Running the real pipeline end-to-end surfaced a second instance of the contamination bug
+from the batch-learning demo — but this time in **production**, not a test script. The
+Analyst's reasoning for real week-1 data referenced "login crashes (-5)" and "login
+stability" even though no login theme existed anywhere in that week's real data. Cause:
+`run_week()` (and therefore the live `POST /weeks/{n}/run` API endpoint the mobile app will
+call) used the default Hindsight bank (`feedback-analyser`), which still held every mock
+memory written during Phases 2-4 testing (fake "login issues"/"dark mode" data). Fixed by
+moving the production `BANK_ID` in `memory.py` to `feedback-analyser-v2` — confirmed clean
+by re-running `run_week(1)` twice in a row: the second run's reasoning correctly referenced
+*only* real numbers from the first run's genuine stored result (e.g. "403 overall,
+consistently the top complaint for multiple weeks"), no phantom login references.
+**`feedback-analyser` (no suffix) is permanently stale — never repoint production at it.**
 
 ## Critical Checker bug found on real data (fixed)
 
@@ -224,21 +256,32 @@ look correct against a small hand-built test set and still break badly at real-d
 
 To demonstrate — not just claim — that the Analyst's reasoning improves with memory, this
 script runs the real gathered data (sorted chronologically, oldest first) in two batches
-through a **dedicated demo Hindsight bank** (`feedback-analyser-real-demo-v2`, separate
-from the production bank in `memory.py`, so results are never contaminated by earlier
-mock/test memories written during Phases 2-4):
-- **Batch 1** (first 300 reviews, clean bank, no prior history): billing & pricing +5 (297
-  mentions), internet reliability +5 (194 mentions), customer service +4 (7 mentions). No
-  negative themes yet.
-- **Batch 2** (next 550 reviews, Analyst can now recall batch 1): billing & pricing +4,
-  reasoning explicitly says *"464, up from 297"* — a number pulled directly from batch 1's
-  stored memory. Internet reliability +5, reasoning cites *"Past-week analysis flagged
-  reliability as the company's standout strength (194 positive mentions)"* — again batch
-  1's exact figure. A new theme, **app login issues (-5)**, appears for the first time and
-  is correctly identified as the sole urgent problem since nothing else in that batch is
-  negative.
-- This is real, verifiable proof the recall → prompt → reasoning loop works on genuine
-  data, not just our earlier synthetic tests. Note: an earlier run of this same script
-  (bank `feedback-analyser-real-demo`, no `-v2`) was contaminated by the "months" Checker
-  bug above (batch 1 wrongly rejected as 100% gibberish) — that bank's contents are stale
-  and should be ignored; `-v2` is the valid one.
+through a **dedicated demo Hindsight bank**, separate from the production bank in
+`memory.py`, so results are never contaminated by earlier mock/test memories.
+
+**Current run (`feedback-analyser-real-demo-v3`, using the real `scorer.py`):**
+- **Batch 1** (300 reviews, clean bank): 5 LLM-discovered themes, all positive — *Speed and
+  Reliability* +5 (169 mentions), *Pricing and Affordability* +5 (291), *Payment
+  Convenience* +5 (273), *Contract Flexibility* +4 (210), *Service Type Preference* +5
+  (239). No negative themes yet.
+- **Batch 2** (550 reviews, Analyst can now recall batch 1): the Scorer independently
+  discovered *differently-worded* theme names this time (e.g. "pricing reasonableness"
+  instead of "Pricing and Affordability") — and Hindsight's semantic recall still bridged
+  the difference correctly. Reasoning for "pricing reasonableness" states *"Historical data
+  shows it has been identified as the product's single biggest strength (291 mentions)"* —
+  batch 1's exact figure, despite the theme's name changing. Two new negative themes
+  emerged that didn't exist in batch 1: **contract and churn (-3, 340 mentions)** and
+  **internet inclusion (-3, 1 mention)** — correctly identified as real, newly-visible
+  problems rather than being padded into the existing positive themes.
+- This is a stronger result than the earlier stub-scorer run below: it proves recall isn't
+  just matching identical strings between weeks, it's genuinely semantic.
+
+**Earlier run (`feedback-analyser-real-demo-v2`, using the old keyword-based stub scorer,
+kept for history):** billing & pricing +5→+4 (297→464 mentions, reasoning cited "up from
+297"), internet reliability +5 both batches (cited "194 positive mentions" from batch 1), a
+new theme **app login issues (-5)** appeared only in batch 2. Superseded by v3 above now
+that the real Scorer exists, but was the first working proof of the recall loop.
+
+Note: an earlier-still run (bank `feedback-analyser-real-demo`, no suffix) was contaminated
+by the "months" Checker bug above (batch 1 wrongly rejected as 100% gibberish) — disregard
+it entirely; only `-v2` and `-v3` are valid.

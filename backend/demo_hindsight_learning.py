@@ -12,9 +12,9 @@ from analyst import analyze_week
 from checker import check_reviews
 from gatherer.gatherer import DEFAULT_OUT
 from memory import HindsightMemory
-from run_week import stub_score_themes
+from scorer import score_themes
 
-DEMO_BANK_ID = "feedback-analyser-real-demo-v2"
+DEMO_BANK_ID = "feedback-analyser-real-demo-v3"
 
 
 def load_all_sorted() -> list[dict]:
@@ -26,7 +26,7 @@ def load_all_sorted() -> list[dict]:
 
 def run_batch(batch_number: int, reviews: list[dict], memory: HindsightMemory) -> dict:
     verified, rejected_count, rejected_by_reason = check_reviews(reviews)
-    themes = stub_score_themes(verified)
+    themes = score_themes(verified)
     analyzed = analyze_week(themes, memory)
     result = {
         "batch": batch_number,

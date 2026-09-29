@@ -2,10 +2,10 @@
 gather -> check -> score -> analyze -> store — and returns results for the
 dashboard.
 
-Gather now uses the real Gatherer (backend/gatherer/, pulled in from the
-sarthak branch): Telco customer feedback + Verizon/AT&T/Xfinity Play Store
-reviews, see NOTES.md. Score is still a stub for the Scorer's real
-theme-grouping/llm.py."""
+Gather uses the real Gatherer (backend/gatherer/, pulled in from the sarthak
+branch): Telco customer feedback + Verizon/AT&T/Xfinity Play Store reviews,
+see NOTES.md. Score uses our own scorer.py (LLM-based theme discovery) since
+no separate Scorer teammate branch exists yet."""
 
 import json
 import sys
@@ -16,13 +16,7 @@ from analyst import analyze_week
 from checker import check_reviews
 from gatherer.gatherer import DEFAULT_OUT, load as load_gathered
 from memory import HindsightMemory
-
-THEME_KEYWORDS = {
-    "billing & pricing": ["monthly charge", "expensive", "price", "bill", "cost"],
-    "internet reliability": ["downtime", "reliable", "outage", "slow", "speed"],
-    "customer service": ["customer service", "support", "technician", "help desk", "representative"],
-    "app login issues": ["sign in", "log in", "login", "password", "blank"],
-}
+from scorer import score_themes
 
 
 def _available_weeks() -> list[str]:
@@ -41,22 +35,10 @@ def gather_week(week_number: int) -> list[dict]:
     return df.to_dict("records")
 
 
-def stub_score_themes(verified_reviews: list[dict]) -> list[dict]:
-    """Placeholder for the Scorer's real theme-grouping/llm.py. Returns
-    [{"name", "count", "samples"}, ...] via naive keyword matching, just so
-    the pipeline is exercisable end-to-end before the real Scorer lands."""
-    themes = []
-    for name, keywords in THEME_KEYWORDS.items():
-        matched = [r for r in verified_reviews if any(kw in r["text"].lower() for kw in keywords)]
-        if matched:
-            themes.append({"name": name, "count": len(matched), "samples": [r["text"] for r in matched[:3]]})
-    return themes
-
-
 def run_week(week_number: int) -> dict:
     raw_reviews = gather_week(week_number)
     verified, rejected_count, rejected_by_reason = check_reviews(raw_reviews)
-    themes = stub_score_themes(verified)
+    themes = score_themes(verified)
 
     with HindsightMemory() as memory:
         analyzed_themes = analyze_week(themes, memory)

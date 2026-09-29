@@ -55,34 +55,67 @@ class HindsightMemory:
         self._client.close()
 
     def store_week(self, week_number: int, week_result: dict,
-                   timestamp: datetime | None = None):
+                   timestamp: datetime | None = None, run_key: str | None = None) -> bool:
         """week_result is the dict run_week() produces: themes (with scores,
         sample reviews) and the Analyst's reasoning/next-steps per theme.
 
         timestamp: when the reviews are from, not when we ran. Without it
         Hindsight dates every memory "today", so replaying twelve past weeks
-        would look like twelve analyses of this week."""
+        would look like twelve analyses of this week.
+
+        run_key: identifies this run within the business (default "week:<n>").
+        Storing the same key again REPLACES the earlier memory, so re-running a
+        week no longer stacks duplicates that read as "3 runs straight".
+
+        Themes the Analyst couldn't really score (degraded: Groq down, or an
+        unparseable reply) are left out -- stored, their placeholder 0 came back
+        on the next run as a genuine past trend. Returns False, storing nothing,
+        when no theme was really scored."""
+        themes = week_result.get("themes", [])
+        real = [{k: v for k, v in t.items() if k != "degraded"}
+                for t in themes if not t.get("degraded")]
+        if not real:
+            return False
+        skipped = len(themes) - len(real)
         content = (
             f"{self.business} -- week {week_number} feedback analysis.\n"
             f"Period: {week_result.get('period', 'unknown')}\n"
             f"Rejected reviews: {week_result.get('rejected_count', 0)}\n"
-            f"{json.dumps(week_result.get('themes', []), indent=2)}"
+            + (f"({skipped} more themes could not be scored and are omitted)\n" if skipped else "")
+            + json.dumps(real, indent=2)
         )
         self._client.retain(
             bank_id=self.bank_id,
             content=content,
             timestamp=timestamp,
             context=f"{self.business}: week {week_number} feedback synthesis",
+            document_id=f"{self.tag}:{run_key or f'week:{week_number}'}",
+            update_mode="replace",
             tags=[self.tag, f"week:{week_number}"],
             metadata={"business": self.business, "week": str(week_number)},
         )
+        return True
 
-    def recall_context(self, query: str, budget: str = "mid") -> list[str]:
+    def recall_context(self, query: str, budget: str = "mid",
+                       before_week: int | None = None) -> list[str]:
         """Returns this business's past memory text relevant to the query, for
-        the Analyst to reason over trends (e.g. a theme recurring across weeks)."""
+        the Analyst to reason over trends (e.g. a theme recurring across weeks).
+
+        before_week: drop memories tagged with this week or a later one.
+        Re-running week 3 after weeks 1-12 are stored otherwise hands the
+        Analyst weeks 4-12 -- and week 3's own old result -- as "the past"."""
         result = self._client.recall(bank_id=self.bank_id, query=query, budget=budget,
                                      tags=[self.tag], tags_match="any_strict")
-        return [memory.text for memory in result.results]
+        return [memory.text for memory in result.results
+                if before_week is None or _week_of(memory.tags) < before_week]
+
+
+def _week_of(tags: list[str] | None) -> float:
+    """The week:<n> tag's number; -inf for untagged memories, so they're kept."""
+    for tag in tags or []:
+        if tag.startswith("week:") and tag[5:].isdigit():
+            return int(tag[5:])
+    return float("-inf")
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ Hindsight-informed reasoning -- this module only needs to return
 import json
 import random
 
-from llm import call_llm
+from llm import call_llm, strip_code_fences
 
 SYSTEM_PROMPT = "You analyze customer feedback and group it into recurring themes."
 
@@ -71,24 +71,35 @@ def extract_themes(verified_reviews, rejected_count=0):
         response = call_llm(SYSTEM_PROMPT, prompt, fallback="[]")
 
         try:
-            # Parse the JSON if call_llm returns a raw string
-            themes = json.loads(response) if isinstance(response, str) else response
+            themes = json.loads(strip_code_fences(response))
+        except json.JSONDecodeError:
+            continue  # malformed output (e.g. a spelled-out count) -- retry once
 
-            # Enforce the agreed data contract before passing to the Analyst
-            validated_themes = []
-            for theme in themes:
-                if all(key in theme for key in ("name", "count", "samples")):
-                    validated_themes.append({
-                        "name": str(theme["name"]),
-                        "count": int(theme["count"]),
-                        "samples": list(theme["samples"])
-                    })
-
-            return validated_themes
-
-        except (json.JSONDecodeError, TypeError, ValueError):
-            # Malformed output (e.g. a spelled-out count) -- retry once before giving up
+        # {"themes": [...]}: iterating the dict itself walked its keys and
+        # silently returned []
+        if isinstance(themes, dict):
+            themes = next((v for v in themes.values() if isinstance(v, list)), [])
+        if not isinstance(themes, list):
             continue
+
+        # Enforce the agreed data contract before passing to the Analyst. One
+        # bad theme is skipped on its own rather than discarding every theme.
+        validated_themes = []
+        for theme in themes:
+            try:
+                samples = theme["samples"]
+                validated_themes.append({
+                    "name": str(theme["name"]),
+                    "count": int(theme["count"]),
+                    "samples": [samples] if isinstance(samples, str) else list(samples),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        # themes but none usable is a malformed reply worth one retry; an
+        # empty list (including call_llm's "[]" fallback) is returned as-is
+        if validated_themes or not themes:
+            return validated_themes
 
     # Fallback to an empty list to prevent pipeline crashes if the LLM output stays malformed
     return []

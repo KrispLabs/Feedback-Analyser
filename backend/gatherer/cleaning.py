@@ -59,7 +59,11 @@ def normalise_rating(value, scale: float = 5.0) -> Optional[float]:
 
 
 def make_id(r: Review) -> str:
-    key = "|".join([r.source, r.business, r.author, r.date or "", r.text])
+    # An approximate date ("3 months ago" -> today minus 90 days) shifts every
+    # day, so hashing it gave the same review a new id on each re-gather and
+    # write(append=True) stacked duplicates instead of updating in place.
+    when = "" if r.extra.get("date_approx") else (r.date or "")
+    key = "|".join([r.source, r.business, r.author, when, r.text])
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
 
 

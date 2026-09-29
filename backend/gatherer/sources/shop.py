@@ -240,19 +240,25 @@ class ShopSource(Source):
                 break
             page_all_older = bool(self.since)
             for review in reviews:
-                # star-only rating with no text: nothing for the Checker or the
-                # Scorer to read, so skip it rather than spend `limit` on it
-                if not (review.get("snippet") or "").strip():
-                    continue
                 when = review.get("iso_date") or review.get("iso_date_of_last_edit")
                 extra = dict(shop)
                 if not when:
                     when = parse_relative_date(review.get("date", ""))
                     extra["date_approx"] = True  # derived from "3 months ago", not exact
-                if self.since and when:
-                    if when[:10] < self.since:
+                # Date check comes BEFORE the text check: the stop-paginating
+                # decision needs every review on the page, and star-only ones
+                # are most of them. Checked after, a page of recent star-only
+                # ratings looked "all older" and ended the run with 0 reviews.
+                # An undated review can't prove the page is old, so it counts
+                # as in range; max_pages still bounds the cost.
+                if self.since:
+                    if when and when[:10] < self.since:
                         continue          # older than the window: drop it
                     page_all_older = False  # something on this page is in range
+                # star-only rating with no text: nothing for the Checker or the
+                # Scorer to read, so skip it rather than spend `limit` on it
+                if not (review.get("snippet") or "").strip():
+                    continue
                 user = review.get("user") or {}
                 yield Review(
                     source="google_maps",

@@ -545,6 +545,57 @@ page, while `searches_used` now correctly reports 2.
 **Total SerpApi spend this session: 2 credits** (the one live test above; the mocked
 verification cost nothing).
 
+## Second main-branch merge: dashboard frontend, market comparison, hardened pipeline
+
+Pulled `main` into `Chaitanya` again — 5 more commits, 22 files, ~3,400 lines. Fast-forward
+wasn't possible this time (real conflicts, both in files this branch had also edited), so
+this one needed actual merge judgment rather than just accepting either side.
+
+**What's new:**
+- **`frontend/`** — a full dashboard (`app.js`, `index.html`, `styles.css`, ~2,400 lines),
+  served by `api.py` at `/` from the same origin as the API (no CORS needed for it).
+- **`backend/market.py`** — the "similar market" branch: finds nearby competitors (or uses
+  named ones), gathers a small batch of their reviews, and asks Groq once to summarise
+  each one's strengths/weaknesses, which the Analyst then scores each theme against.
+- **`backend/errors.py`** — typed pipeline exceptions (`NothingToAnalyse` 404,
+  `UpstreamError` 502, `ConfigError` 503) instead of overloading `LookupError`/`RuntimeError`,
+  which had a real bug: `KeyError` is a `LookupError`, so a plain coding bug (missing dict
+  key) was coming back to API clients as a 404 "not found" instead of a 500.
+  `api.py` now has global exception handlers so every error returns the same JSON shape.
+- **`memory.py` rework** — every memory is now scoped to one business (`business_tag()`),
+  fixing a real cross-contamination bug: recalling "Overpriced chai at Niloufer Cafe" used
+  to return 26 unrelated Telco memories that the Analyst then cited as the cafe's own past
+  trend. Also: Hindsight failures no longer raise — `memory.available`/`memory.error` let
+  the analysis continue without past-context rather than losing a run that already paid
+  for SerpApi + Groq calls.
+- **`checker.py` fix** — `_is_gibberish`/`_normalize` were stripping combining marks and
+  measuring vowel ratio over all alphabetic characters, which rejected Hindi/Telugu text
+  entirely (0% "aeiou" by construction) — a real problem for a Hyderabad cafe's actual
+  reviews. Now Unicode-category-based normalization and Latin-only vowel measurement.
+- **`llm.py`** — `call_llm` now also treats an empty completion (reasoning model burns its
+  whole budget on hidden reasoning, returns "") as a failure to retry/fall back on, not a
+  successful empty answer. Also switched to `get_key()` so a missing `HINDSIGHT_API_KEY`
+  no longer breaks every LLM call (it used to, via `load_keys()` demanding every key).
+- **HTTPS fix** — `base.py` now builds urllib requests with `certifi`'s CA bundle
+  (`SSL_CONTEXT`); a bare Python install on macOS ships no root certificates, so every
+  shop-source HTTPS call failed with `CERTIFICATE_VERIFY_FAILED` outside Docker.
+
+**Merge conflicts, both in files we'd already fixed (`shop.py`, `analyse_shop.py`):**
+main didn't have our `searches_used` cost-counting fix from the previous merge, and had
+independently kept using the old, undercounting `pages_fetched` for cost display while
+adding real improvements of its own (graceful `write()` failure handling, a `self.place`
+attribute for the new `similar_nearby()` competitor-finder, a better "page cap hit"
+message). Resolved by combining both: kept every one of main's improvements, but pointed
+their cost-reporting at our `searches_used` instead of `pages_fetched`. Also found the same
+undercounting bug had propagated into the new `market.py`'s `gather_competitors()` (it
+accumulated `pages_fetched`, missing the lookup cost for any *named* competitor) — fixed
+there too, in the same merge commit.
+
+Verified after merging: syntax-compiled and imported every backend module (all clean,
+including the two new files `errors.py` and `market.py`) before committing. No live
+API calls were needed to verify this merge — the conflicts were resolvable by reading the
+code, and the credit-costly fix had already been verified live in the previous merge.
+
 ## Critical Checker bug found on real data (fixed)
 
 Running the Checker on the first 300 real reviews rejected **all 300** as "gibberish" —

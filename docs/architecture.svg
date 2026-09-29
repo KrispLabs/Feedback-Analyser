@@ -1,0 +1,275 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1500" viewBox="0 0 1800 1500" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>Feedback Synthesiser — System Architecture</title>
+  <defs>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.2" fill="#3a3a3a"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f2f2f2"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e3b35c"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6cc59a"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e07a85"/>
+    </marker>
+    <style>
+      .h1   { font-size: 30px; font-weight: 700; fill: #ffffff; }
+      .sub  { font-size: 15px; fill: #a9b4bd; }
+      .big  { font-size: 28px; font-weight: 700; fill: #ffffff; }
+      .hd   { font-size: 21px; font-weight: 700; fill: #ffffff; }
+      .t    { font-size: 16px; font-weight: 650; fill: #ffffff; }
+      .s    { font-size: 13px; fill: #d6e4ee; }
+      .m    { font-size: 12.5px; fill: #bfe0f5; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+      .lbl  { font-size: 12px; fill: #c9c9c9; font-style: italic; }
+      .ext  { font-size: 11px; font-weight: 700; fill: #e3b35c; letter-spacing: 1px; }
+      .main { fill: #5b95bb; }
+      .card { fill: #28435a; stroke: #5b95bb; stroke-width: 1.5; }
+      .box  { fill: none; stroke: #5b95bb; stroke-width: 1.2; stroke-dasharray: 4 4; }
+      .xt   { fill: #2e2a20; stroke: #e3b35c; stroke-width: 1.6; stroke-dasharray: 6 4; }
+      .flow { fill: none; stroke: #f2f2f2; stroke-width: 2.2; }
+      .mem  { fill: none; stroke: #e3b35c; stroke-width: 2.2; stroke-dasharray: 7 5; }
+      .badge { fill: #e3b35c; }
+      .badgeT { font-size: 10.5px; font-weight: 700; fill: #1e1e1e; }
+    </style>
+  </defs>
+
+  <!-- background -->
+  <rect width="1800" height="1500" fill="#1e1e1e"/>
+  <rect width="1800" height="1500" fill="url(#dots)"/>
+
+  <!-- title -->
+  <text x="900" y="58" text-anchor="middle" class="h1">Feedback Synthesiser — System Architecture</text>
+  <text x="900" y="88" text-anchor="middle" class="sub">business name + location in → public reviews gathered, verified, grouped into themes, scored −5..+5 with a reason and a next step, remembered across runs</text>
+
+  <!-- ===================== ROW A: entry points ===================== -->
+  <rect x="120" y="125" width="420" height="100" rx="16" class="card"/>
+  <text x="330" y="156" text-anchor="middle" class="t">Web Dashboard</text>
+  <text x="330" y="180" text-anchor="middle" class="m">frontend/ index.html · app.js · styles.css</text>
+  <text x="330" y="202" text-anchor="middle" class="s">run form · results view · run history (localStorage)</text>
+
+  <rect x="690" y="125" width="420" height="100" rx="16" class="card"/>
+  <text x="900" y="156" text-anchor="middle" class="t">REST API — FastAPI</text>
+  <text x="900" y="180" text-anchor="middle" class="m">api.py · GET /health · POST /shops/analyse</text>
+  <text x="900" y="202" text-anchor="middle" class="m">POST /weeks/{n}/run · serves frontend/ · Docker :8000</text>
+
+  <rect x="1260" y="125" width="420" height="100" rx="16" class="card"/>
+  <text x="1470" y="156" text-anchor="middle" class="t">Command Line</text>
+  <text x="1470" y="180" text-anchor="middle" class="m">analyse_shop.py "name" "location" [--compare]</text>
+  <text x="1470" y="202" text-anchor="middle" class="m">run_week.py N · python -m gatherer</text>
+
+  <path d="M544,175 H686" class="flow" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="615" y="165" text-anchor="middle" class="lbl">HTTP · JSON</text>
+  <path d="M900,225 V276" class="flow" marker-end="url(#arrow)"/>
+  <path d="M1470,225 V355 H1164" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ===================== ROW B: orchestrator ===================== -->
+  <rect x="640" y="280" width="520" height="150" rx="60" class="main"/>
+  <text x="900" y="336" text-anchor="middle" class="big">Feedback Synthesiser</text>
+  <text x="900" y="365" text-anchor="middle" class="m" style="fill:#eaf5fc">analyse_shop() · run_week()</text>
+  <text x="900" y="392" text-anchor="middle" class="s" style="fill:#ffffff">gather → check → score → analyse → store</text>
+
+  <path d="M700,430 L325,501" class="flow" marker-end="url(#arrow)"/>
+  <path d="M900,430 V501" class="flow" marker-end="url(#arrow)"/>
+  <path d="M1100,430 L1475,501" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ===================== column headers ===================== -->
+  <rect x="80" y="505" width="480" height="80" rx="16" class="main"/>
+  <text x="320" y="540" text-anchor="middle" class="hd">Feedback Gatherer</text>
+  <text x="320" y="565" text-anchor="middle" class="m" style="fill:#eaf5fc">gatherer/ · market.py</text>
+
+  <rect x="660" y="505" width="480" height="80" rx="16" class="main"/>
+  <text x="900" y="540" text-anchor="middle" class="hd">Reasoning</text>
+  <text x="900" y="565" text-anchor="middle" class="m" style="fill:#eaf5fc">checker.py · scorer.py · analyst.py · llm.py</text>
+
+  <rect x="1240" y="505" width="480" height="80" rx="16" class="main"/>
+  <text x="1480" y="540" text-anchor="middle" class="hd">Output</text>
+  <text x="1480" y="565" text-anchor="middle" class="m" style="fill:#eaf5fc">JSON payload · presentation · memory.py</text>
+
+  <!-- ===================== GATHERER column ===================== -->
+  <path d="M195,585 V626" class="flow" marker-end="url(#arrow)"/>
+  <path d="M445,585 V626" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="80" y="630" width="230" height="70" rx="35" class="main"/>
+  <text x="195" y="661" text-anchor="middle" class="t" style="font-size:15px">Real feedback from</text>
+  <text x="195" y="682" text-anchor="middle" class="t" style="font-size:15px">review sites</text>
+
+  <rect x="330" y="630" width="230" height="70" rx="35" class="main"/>
+  <text x="445" y="658" text-anchor="middle" class="t" style="font-size:15px">Feedback from similar market</text>
+  <text x="445" y="680" text-anchor="middle" class="s" style="fill:#eaf5fc">only when compare = true</text>
+
+  <!-- sources -->
+  <path d="M195,700 V736" class="flow" marker-end="url(#arrow)"/>
+  <rect x="80" y="740" width="230" height="312" rx="12" class="box"/>
+  <text x="195" y="764" text-anchor="middle" class="m">gatherer/sources/</text>
+
+  <rect x="92" y="778" width="206" height="56" rx="10" class="xt"/>
+  <text x="195" y="801" text-anchor="middle" class="t" style="font-size:14px">Google Maps reviews</text>
+  <text x="195" y="821" text-anchor="middle" class="s">shop.py · SerpApi / Places API</text>
+
+  <rect x="92" y="846" width="206" height="56" rx="10" class="xt"/>
+  <text x="195" y="869" text-anchor="middle" class="t" style="font-size:14px">Google Play Store</text>
+  <text x="195" y="889" text-anchor="middle" class="s">playstore.py · play-scraper</text>
+
+  <rect x="92" y="914" width="206" height="56" rx="10" class="xt"/>
+  <text x="195" y="937" text-anchor="middle" class="t" style="font-size:14px">Apple App Store</text>
+  <text x="195" y="957" text-anchor="middle" class="s">appstore.py · iTunes RSS</text>
+
+  <rect x="92" y="982" width="206" height="56" rx="10" class="xt"/>
+  <text x="195" y="1005" text-anchor="middle" class="t" style="font-size:14px">CSV datasets</text>
+  <text x="195" y="1025" text-anchor="middle" class="s">csv_source.py · Kaggle etc.</text>
+
+  <path d="M195,1052 V1086" class="flow" marker-end="url(#arrow)"/>
+  <rect x="80" y="1090" width="230" height="100" rx="14" class="card"/>
+  <text x="195" y="1116" text-anchor="middle" class="t" style="font-size:15px">Clean &amp; normalise</text>
+  <text x="195" y="1138" text-anchor="middle" class="m">cleaning.py · schema.py</text>
+  <text x="195" y="1158" text-anchor="middle" class="s">stable-hash IDs, one table</text>
+  <text x="195" y="1178" text-anchor="middle" class="m">data/cleaned/reviews.csv</text>
+
+  <!-- market -->
+  <path d="M445,700 V736" class="flow" marker-end="url(#arrow)"/>
+  <rect x="330" y="740" width="230" height="366" rx="12" class="box"/>
+  <text x="445" y="764" text-anchor="middle" class="m">market.py</text>
+
+  <rect x="342" y="778" width="206" height="66" rx="10" class="card"/>
+  <text x="445" y="804" text-anchor="middle" class="m" style="fill:#ffffff">find_competitors()</text>
+  <text x="445" y="826" text-anchor="middle" class="s">named, or busiest nearby (≤5)</text>
+
+  <rect x="342" y="858" width="206" height="66" rx="10" class="card"/>
+  <text x="445" y="884" text-anchor="middle" class="m" style="fill:#ffffff">gather_competitors()</text>
+  <text x="445" y="906" text-anchor="middle" class="s">same shop source + Checker</text>
+
+  <rect x="342" y="938" width="206" height="66" rx="10" class="card"/>
+  <text x="445" y="964" text-anchor="middle" class="m" style="fill:#ffffff">summarise()</text>
+  <text x="445" y="986" text-anchor="middle" class="s">strengths · weaknesses</text>
+  <rect x="506" y="944" width="38" height="16" rx="8" class="badge"/>
+  <text x="525" y="956" text-anchor="middle" class="badgeT">Groq</text>
+
+  <rect x="342" y="1018" width="206" height="74" rx="10" class="card"/>
+  <text x="445" y="1044" text-anchor="middle" class="m" style="fill:#ffffff">context_for_analyst()</text>
+  <text x="445" y="1066" text-anchor="middle" class="s">local-market context text</text>
+
+  <path d="M445,844 V854" class="flow" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M445,924 V934" class="flow" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M445,1004 V1014" class="flow" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- reviews.csv → Checker (routed through the gap between columns) -->
+  <path d="M195,1190 V1230 H610 V690 H656" class="flow" marker-end="url(#arrow)"/>
+  <text x="400" y="1250" text-anchor="middle" class="lbl">id · source · business · date · week · rating · text</text>
+
+  <!-- market context → Analyst (hops over the reviews line) -->
+  <path d="M548,1060 H602 a8,8 0 0 1 16,0 H656" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ===================== REASONING column ===================== -->
+  <rect x="660" y="630" width="480" height="120" rx="40" class="main"/>
+  <text x="900" y="664" text-anchor="middle" class="t" style="font-size:18px">Checker: verify feedback</text>
+  <text x="900" y="688" text-anchor="middle" class="m" style="fill:#eaf5fc">checker.py · rule-based, no LLM</text>
+  <text x="900" y="712" text-anchor="middle" class="s" style="fill:#ffffff">duplicates · &lt; 4 words · repeated-phrase spam</text>
+  <text x="900" y="732" text-anchor="middle" class="s" style="fill:#ffffff">gibberish (low vowels / consonant runs)</text>
+
+  <path d="M800,750 L780,796" class="flow" stroke="#6cc59a" marker-end="url(#arrowGreen)"/>
+  <path d="M1000,750 L1020,796" class="flow" stroke="#e07a85" marker-end="url(#arrowRed)"/>
+
+  <rect x="660" y="800" width="230" height="60" rx="30" fill="#2f5e46" stroke="#6cc59a" stroke-width="1.6"/>
+  <text x="775" y="826" text-anchor="middle" class="t" style="font-size:15px">True</text>
+  <text x="775" y="846" text-anchor="middle" class="s">verified reviews</text>
+
+  <rect x="910" y="800" width="230" height="60" rx="30" fill="#5e2f36" stroke="#e07a85" stroke-width="1.6"/>
+  <text x="1025" y="826" text-anchor="middle" class="t" style="font-size:15px">False</text>
+  <text x="1025" y="846" text-anchor="middle" class="s">rejected_count · by reason</text>
+
+  <path d="M775,860 V891" class="flow" stroke="#6cc59a" marker-end="url(#arrowGreen)"/>
+
+  <rect x="660" y="895" width="480" height="100" rx="40" class="main"/>
+  <text x="900" y="928" text-anchor="middle" class="t" style="font-size:18px">Feedback Scorer</text>
+  <text x="900" y="952" text-anchor="middle" class="m" style="fill:#eaf5fc">scorer.py · one Groq call over a sample</text>
+  <text x="900" y="976" text-anchor="middle" class="s" style="fill:#ffffff">→ themes [ { name, count, samples } ]</text>
+  <rect x="1082" y="905" width="38" height="16" rx="8" class="badge"/>
+  <text x="1101" y="917" text-anchor="middle" class="badgeT">Groq</text>
+
+  <path d="M900,995 V1031" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="660" y="1035" width="480" height="160" rx="40" class="main"/>
+  <text x="900" y="1068" text-anchor="middle" class="t" style="font-size:18px">Analyst</text>
+  <text x="900" y="1092" text-anchor="middle" class="m" style="fill:#eaf5fc">analyst.py · one Groq call per theme</text>
+  <text x="900" y="1116" text-anchor="middle" class="s" style="fill:#ffffff">theme + past runs (recall) + local-market context</text>
+  <text x="900" y="1142" text-anchor="middle" class="t" style="font-size:14px">tells the reason for the score and future steps</text>
+  <text x="900" y="1166" text-anchor="middle" class="m" style="fill:#eaf5fc">score −5..+5 · reasoning · next_step · vs_competitors</text>
+  <rect x="1082" y="1045" width="38" height="16" rx="8" class="badge"/>
+  <text x="1101" y="1057" text-anchor="middle" class="badgeT">Groq</text>
+
+  <!-- Groq -->
+  <path d="M900,1195 V1241" class="mem" marker-end="url(#arrowAmber)"/>
+  <rect x="660" y="1245" width="480" height="84" rx="14" class="xt"/>
+  <text x="680" y="1266" class="ext">EXTERNAL LLM</text>
+  <text x="900" y="1284" text-anchor="middle" class="t">Groq API — llm.py call_llm()</text>
+  <text x="900" y="1306" text-anchor="middle" class="s">shared by Scorer, Analyst, market.summarise()</text>
+  <text x="900" y="1323" text-anchor="middle" class="s">retries · Retry-After · rate-limit cap → "degraded" fallback</text>
+
+  <!-- ===================== OUTPUT column ===================== -->
+  <!-- rejected → payload -->
+  <path d="M1140,830 H1170 V700 H1236" class="flow" stroke="#e07a85" marker-end="url(#arrowRed)"/>
+  <!-- analyst → payload -->
+  <path d="M1140,1070 H1210 V770 H1236" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="1240" y="630" width="480" height="180" rx="14" class="card"/>
+  <text x="1480" y="660" text-anchor="middle" class="t" style="font-size:18px">Result payload (JSON)</text>
+  <text x="1480" y="686" text-anchor="middle" class="m">business · location · period · week</text>
+  <text x="1480" y="708" text-anchor="middle" class="m">reviews_gathered · reviews_verified</text>
+  <text x="1480" y="730" text-anchor="middle" class="m">rejected_count · rejected_by_reason</text>
+  <text x="1480" y="752" text-anchor="middle" class="m">themes[ score · reasoning · next_step · degraded ]</text>
+  <text x="1480" y="774" text-anchor="middle" class="m">market{ competitors } · stored</text>
+  <text x="1480" y="796" text-anchor="middle" class="lbl">returned by the API / printed by the CLI</text>
+
+  <path d="M1480,810 V856" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="1240" y="860" width="480" height="130" rx="50" class="main"/>
+  <text x="1480" y="894" text-anchor="middle" class="t" style="font-size:18px">Presentation</text>
+  <text x="1480" y="920" text-anchor="middle" class="s" style="fill:#ffffff">Dashboard: themes ranked +5 … −5 with why / do next,</text>
+  <text x="1480" y="942" text-anchor="middle" class="s" style="fill:#ffffff">rejected-review counts, market comparison, run history</text>
+  <text x="1480" y="966" text-anchor="middle" class="s" style="fill:#ffffff">CLI: ranked terminal report</text>
+
+  <!-- Hindsight memory -->
+  <rect x="1240" y="1035" width="480" height="160" rx="14" class="xt"/>
+  <text x="1260" y="1056" class="ext">EXTERNAL MEMORY</text>
+  <text x="1480" y="1076" text-anchor="middle" class="t" style="font-size:18px">Hindsight memory</text>
+  <text x="1480" y="1100" text-anchor="middle" class="m">memory.py · Hindsight Cloud</text>
+  <text x="1480" y="1124" text-anchor="middle" class="s">bank feedback-analyser-v2 (HINDSIGHT_BANK_ID)</text>
+  <text x="1480" y="1146" text-anchor="middle" class="s">tag business:&lt;slug&gt; keeps each business's recall separate</text>
+  <text x="1480" y="1170" text-anchor="middle" class="s">semantic recall bridges renamed themes → real trends</text>
+
+  <path d="M1236,1100 H1144" class="mem" marker-end="url(#arrowAmber)"/>
+  <text x="1190" y="1092" text-anchor="middle" class="lbl" style="fill:#e3b35c">recall</text>
+  <path d="M1144,1160 H1236" class="mem" marker-end="url(#arrowAmber)"/>
+  <text x="1190" y="1152" text-anchor="middle" class="lbl" style="fill:#e3b35c">store_week</text>
+
+  <!-- ===================== legend ===================== -->
+  <rect x="80" y="1380" width="1640" height="80" rx="14" fill="#252525" stroke="#3a3a3a"/>
+  <text x="110" y="1426" class="t" style="font-size:14px">Legend</text>
+
+  <rect x="190" y="1406" width="60" height="30" rx="10" class="main"/>
+  <text x="262" y="1426" class="s">pipeline stage</text>
+
+  <rect x="380" y="1406" width="60" height="30" rx="8" class="card"/>
+  <text x="452" y="1426" class="s">module / data</text>
+
+  <rect x="570" y="1406" width="60" height="30" rx="8" class="xt"/>
+  <text x="642" y="1426" class="s">external service</text>
+
+  <path d="M780,1421 H840" class="flow" marker-end="url(#arrow)"/>
+  <text x="852" y="1426" class="s">data flow</text>
+
+  <path d="M950,1421 H1010" class="mem" marker-end="url(#arrowAmber)"/>
+  <text x="1022" y="1426" class="s">LLM / memory call</text>
+
+  <rect x="1170" y="1413" width="38" height="16" rx="8" class="badge"/>
+  <text x="1189" y="1425" text-anchor="middle" class="badgeT">Groq</text>
+  <text x="1220" y="1426" class="s">uses Groq</text>
+
+  <rect x="1320" y="1408" width="26" height="26" rx="13" fill="#2f5e46" stroke="#6cc59a"/>
+  <rect x="1352" y="1408" width="26" height="26" rx="13" fill="#5e2f36" stroke="#e07a85"/>
+  <text x="1390" y="1426" class="s">verified / rejected reviews</text>
+</svg>

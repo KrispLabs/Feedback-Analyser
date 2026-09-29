@@ -29,6 +29,8 @@ $ python analyse_shop.py "Niloufer Cafe" "Hitech City"
 
 ## How it works
 
+![Feedback Synthesiser architecture](docs/architecture.svg)
+
 Five stages. Each one hands the next a plain list of dicts, so any stage can be
 swapped without touching the others.
 

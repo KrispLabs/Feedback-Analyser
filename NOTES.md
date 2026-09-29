@@ -279,6 +279,18 @@ satisfaction/loyalty, monthly charges, service reliability, contract preference,
 payment methods, customer support, mobile app usability, activation issues, security/phone
 plan), and the Analyst scored and reasoned over every one of them correctly, including
 citing real cross-week figures ("403 overall", "355 churn reports") with no contamination.
+The run took a while (10 sequential Analyst calls, one per theme, all sharing the same
+8,000 TPM budget) but completed with real reasoning content throughout — no fallback text
+anywhere in the result, so no call actually got stuck in a rate-limit loop this time.
+
+**Follow-up hardening (`backend/llm.py`):** a `run_week()` with more themes than this one
+could plausibly hit a real 429 mid-run, and the original backoff (a blind 1s/2s/4s
+exponential wait, max ~7s across 3 attempts, same for every error type) is nowhere near
+long enough to outlast Groq's per-minute window resetting — it would burn all 3 retries
+and fall through to the safe-but-degraded fallback instead of actually recovering. Added a
+`RateLimitError`-specific branch that honors the server's `Retry-After` header when present,
+falling back to a fixed 20s wait otherwise, while leaving the short exponential backoff in
+place for other transient errors (timeouts, 5xx, etc.) where a fast retry is the right call.
 `run_week.py` and `demo_hindsight_learning.py` (now on bank `feedback-analyser-real-demo-v4`)
 both call `extract_themes` in place of our retired `score_themes`.
 

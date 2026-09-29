@@ -13,15 +13,23 @@ low reasoning effort keeps each call's token usage well within budget."""
 
 import time
 
-from groq import Groq
+from groq import Groq, RateLimitError
 
 from config import load_keys
 
 MODEL = "openai/gpt-oss-120b"
 MAX_TOKENS = 1500
+RATE_LIMIT_FALLBACK_WAIT = 20  # seconds, used when Groq doesn't send Retry-After
 
 
 def call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3, fallback: str | None = None) -> str:
+    """A single run_week() can make several sequential calls (one Scorer call
+    + one Analyst call per theme) against a Groq plan capped at 8,000 tokens
+    PER MINUTE -- so a 429 here is an expected, recoverable condition, not a
+    rare edge case. The generic exponential backoff below (max ~7s across 3
+    attempts) isn't enough to outlast a per-minute window resetting, so a
+    RateLimitError gets its own longer wait, honoring the server's
+    Retry-After header when it sends one."""
     client = Groq(api_key=load_keys()["GROQ_API_KEY"])
     last_error = None
 
@@ -38,6 +46,11 @@ def call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3, fallbac
                 max_tokens=MAX_TOKENS,
             )
             return response.choices[0].message.content
+        except RateLimitError as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                retry_after = e.response.headers.get("retry-after")
+                time.sleep(float(retry_after) if retry_after else RATE_LIMIT_FALLBACK_WAIT)
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:

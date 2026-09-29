@@ -108,9 +108,9 @@ teammates push them; end-to-end test across all 4 demo weeks; dashboard hookup.
 
 ## App API (for the frontend)
 
-This project is becoming an app — a friend owns the frontend, we own the backend. The
-frontend is not our job; this section is the contract so it can be built against without
-needing to read our code.
+This project is becoming a mobile app, targeting **Android and iOS** — a friend owns the
+frontend, we own the backend. The frontend is not our job; this section is the contract
+so it can be built against without needing to read our code.
 
 - `backend/api.py`: FastAPI wrapper around `run_week()`. Runs on port 8000
   (`uvicorn api:app --host 0.0.0.0 --port 8000`, or via `docker compose up`).

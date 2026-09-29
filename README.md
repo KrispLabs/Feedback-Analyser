@@ -238,9 +238,15 @@ curl -X POST http://localhost:8000/shops/analyse \
 
 ### `POST /weeks/{week_number}/run`
 
-Same payload shape, but for one ISO week of whatever the Gatherer last
-collected. `week_number` is 1-indexed into the weeks present in the CSV (1 =
-earliest). Used for the weekly-trend view rather than one-off lookups.
+Same payload shape, but for one ISO week of one business's gathered reviews.
+Optional query param `?business=Telco` (defaults to the `business` in
+`backend/gatherer_config.json`). `week_number` is 1-indexed into the weeks that
+business has reviews for (1 = earliest). Only its own reviews are analysed;
+competitor (`origin=market`) rows are never mixed in. Used for the
+weekly-trend view rather than one-off lookups. `location` is absent here.
+
+Hindsight memory is scoped per business too: a run only recalls that
+business's past runs (shops are keyed by name + location).
 
 ### Response fields
 

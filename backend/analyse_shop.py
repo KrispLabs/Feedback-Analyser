@@ -111,11 +111,13 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
 
     # 4 + 5. ANALYSE AND STORE ----------------------------------------------
     rule("4/5  Scoring each theme (-5..+5) with reasoning")
-    with HindsightMemory() as memory:
-        say(f"      memory   : Hindsight bank {memory.bank_id!r}\n")
+    # name + location, so two branches of one chain keep separate histories
+    business = f"{name}, {location}" if location else name
+    with HindsightMemory(business) as memory:
+        say(f"      memory   : Hindsight bank {memory.bank_id!r}, scoped to {memory.tag!r}\n")
         period = (f"{dated.min()} to {dated.max()}" if len(dated) else
                   (f"the last {months} {plural}" if months else "all time"))
-        analyzed = analyze_week(themes, memory, business=f"{name}, {location}", period=period)
+        analyzed = analyze_week(themes, memory, business=business, period=period)
 
         for t in sorted(analyzed, key=lambda t: t["score"]):
             flag = "  ⚠ NOT A REAL SCORE" if FALLBACK_MARKER in t["reasoning"] else ""

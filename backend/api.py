@@ -68,11 +68,12 @@ def analyse(req: ShopRequest):
 
 
 @app.post("/weeks/{week_number}/run")
-def run(week_number: int):
-    """Runs the full pipeline for one ISO week of already-gathered data and
-    returns the result the dashboard renders: rejected count, themes, scores,
-    reasoning, next steps."""
+def run(week_number: int, business: str | None = None):
+    """Runs the full pipeline for one ISO week of one business's already-gathered
+    reviews and returns the result the dashboard renders: rejected count, themes,
+    scores, reasoning, next steps. `business` defaults to the one in
+    gatherer_config.json; competitor (market) reviews are never mixed in."""
     try:
-        return run_week(week_number)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No data found for week {week_number}")
+        return run_week(week_number, business)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"No data found for week {week_number}: {e}")

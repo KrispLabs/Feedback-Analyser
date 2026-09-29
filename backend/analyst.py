@@ -104,7 +104,7 @@ if __name__ == "__main__":
         },
     ]
 
-    with HindsightMemory() as memory:
+    with HindsightMemory("Analyst Selftest App", bank_id="feedback-analyser-selftest") as memory:
         analyzed = analyze_week(mock_themes, memory)
         for theme in analyzed:
             print(f"\n{theme['name']} -> score {theme['score']}")

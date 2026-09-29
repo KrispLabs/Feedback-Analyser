@@ -16,6 +16,7 @@ Config (JSON):
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +28,10 @@ from .sources import REGISTRY, Source
 # repo-root data/ locally; docker-compose sets DATA_DIR=/data and mounts ./data there
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
 DEFAULT_OUT = DATA_DIR / "cleaned" / "reviews.csv"
+
+# write(append=True) is read-merge-rewrite; the API runs requests on a thread
+# pool, so two concurrent shop analyses could each drop the other's rows.
+_WRITE_LOCK = threading.Lock()
 
 
 def build_sources(config: dict, base_dir: Path | None = None) -> list[Source]:
@@ -48,7 +53,11 @@ def build_sources(config: dict, base_dir: Path | None = None) -> list[Source]:
 
 
 def gather(sources: list[Source], min_chars: int = 1, since: str | None = None,
-           until: str | None = None, log=print) -> pd.DataFrame:
+           until: str | None = None, log=print, errors: list | None = None) -> pd.DataFrame:
+    """errors: if given, each failed source's (source, exception) is appended.
+    A failure is still logged and the other sources still run, but a caller
+    that silences `log` can now tell "SerpApi rejected the key" apart from
+    "this shop has no reviews" -- both used to come back as zero rows."""
     rows = []
     for src in sources:
         fetched = kept = 0
@@ -61,6 +70,8 @@ def gather(sources: list[Source], min_chars: int = 1, since: str | None = None,
                     kept += 1
         except Exception as e:  # one dead source shouldn't kill the week's run
             log(f"  ! {src!r} failed: {e}")
+            if errors is not None:
+                errors.append((src, e))
         log(f"  {src!r}: fetched {fetched}, kept {kept}"
             + ("  <- nothing returned, check the id/path" if fetched == 0 else ""))
 
@@ -108,13 +119,14 @@ def write(df: pd.DataFrame, out: Path = DEFAULT_OUT, append: bool = False) -> pd
     are stable hashes, so re-gathering the same shop updates in place rather
     than duplicating)."""
     out.parent.mkdir(parents=True, exist_ok=True)
-    if append and out.exists():
-        old = pd.read_csv(out, dtype={"id": str, "week": str, "date": str}, keep_default_na=False)
-        df = (pd.concat([old, df], ignore_index=True)
-                .drop_duplicates(subset="id", keep="last")
-                .sort_values(["date", "source"], ascending=[False, True])
-                .reset_index(drop=True))
-    df.to_csv(out, index=False)
+    with _WRITE_LOCK:
+        if append and out.exists():
+            old = pd.read_csv(out, dtype={"id": str, "week": str, "date": str}, keep_default_na=False)
+            df = (pd.concat([old, df], ignore_index=True)
+                    .drop_duplicates(subset="id", keep="last")
+                    .sort_values(["date", "source"], ascending=[False, True])
+                    .reset_index(drop=True))
+        df.to_csv(out, index=False)
     return df
 
 

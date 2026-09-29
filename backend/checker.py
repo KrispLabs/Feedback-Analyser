@@ -4,15 +4,24 @@ Scorer. Input schema (from the Gatherer): id, source, date, rating, text."""
 
 import csv
 import re
+import unicodedata
 from collections import Counter
 
 MIN_WORDS = 4
 VOWEL_RATIO_THRESHOLD = 0.2
 REPEATED_WORD_RATIO_THRESHOLD = 0.5
+# A word must also appear this often: in a 4-word review any repeat hits the
+# ratio alone, rejecting real ones like "Good food, good price."
+MIN_REPEATS = 3
 
 
 def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", text.lower())).strip()
+    r"""Lowercase, drop punctuation and symbols, collapse whitespace. Removes by
+    Unicode category rather than [^\w\s]: \w excludes combining marks, so
+    Hindi/Telugu vowel signs were stripped ("खाना" -> "खन") and different
+    reviews could collapse into one "duplicate"."""
+    kept = "".join(c for c in text.lower() if unicodedata.category(c)[0] not in "PS")
+    return re.sub(r"\s+", " ", kept).strip()
 
 
 def _is_too_short(text: str) -> bool:
@@ -24,7 +33,8 @@ def _is_repeated_phrase(text: str) -> bool:
     if not words:
         return True
     most_common_count = Counter(words).most_common(1)[0][1]
-    return most_common_count / len(words) >= REPEATED_WORD_RATIO_THRESHOLD
+    return (most_common_count >= MIN_REPEATS
+            and most_common_count / len(words) >= REPEATED_WORD_RATIO_THRESHOLD)
 
 
 def _is_gibberish(text: str) -> bool:
@@ -33,8 +43,13 @@ def _is_gibberish(text: str) -> bool:
     vowels; random keyboard-mash text like "asdkj aksjd" comes in under 20%).
     A per-word "long consonant run" rule was tried and removed: it flagged
     ordinary words like "months" (m-o-n-t-h-s has 4 consonants in a row) as
-    gibberish, incorrectly rejecting every real review that used them."""
-    letters = [c for c in text if c.isalpha()]
+    gibberish, incorrectly rejecting every real review that used them.
+
+    Only Latin letters are measured. Counting every alphabetic character put
+    Hindi and Telugu reviews at a 0% "aeiou" ratio and rejected all of them --
+    for a Hyderabad shop, a big share of its real reviews. Non-Latin text isn't
+    judged by this rule at all; romanised Hinglish still is."""
+    letters = [c for c in text if "a" <= c <= "z"]
     if len(letters) < 6:
         return False
     vowels = sum(1 for c in letters if c in "aeiou")
@@ -48,7 +63,11 @@ def check_reviews(reviews: list[dict]) -> tuple[list[dict], int, dict]:
     rejected_by_reason = Counter()
 
     for review in reviews:
-        text = review["text"]
+        text = review.get("text")
+        # NaN from a pandas read, None from a source: no text is nothing to verify
+        if not isinstance(text, str) or not text.strip():
+            rejected_by_reason["empty"] += 1
+            continue
         normalized = _normalize(text)
 
         if normalized in seen_normalized:

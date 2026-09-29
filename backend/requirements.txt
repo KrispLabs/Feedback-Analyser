@@ -1,5 +1,6 @@
 hindsight-client
 groq
+certifi
 fastapi
 uvicorn[standard]
 pandas

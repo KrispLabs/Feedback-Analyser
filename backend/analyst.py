@@ -16,7 +16,7 @@ Score scale: -5 to +5, like a business owner triaging feedback.
 
 import json
 
-from llm import call_llm
+from llm import call_llm, strip_code_fences
 from memory import HindsightMemory
 
 SYSTEM_PROMPT = """You are an Analyst that scores customer-feedback themes on a \
@@ -39,21 +39,34 @@ the things its customers actually mention. Never assume it is an app: do not ref
 - -5: the single most urgent problem — the owner must work on this instantly, before anything else.
 
 Describe the data using the period you are given, not "this week" unless that is the
-period. For the theme you are given, respond with ONLY a JSON object:
-{"score": <int -5..5>, "reasoning": "<why this score, referencing the review data and any past-run trend you were given, e.g. 'this has been the top complaint for 3 runs straight'>", "next_step": "<if score is negative: a concrete, prioritized action the owner can take; if positive: what to keep doing/protect>"}"""
+period.
+
+You may also be told what customers of nearby competitors praise and criticise. Use it
+to judge this theme against the local market: a weakness competitors have too matters
+less than one they have solved, and a strength competitors lack is worth protecting.
+If a competitor does this theme well, the next step can borrow from what they do.
+Only name a competitor when their reviews actually cover this theme.
+
+For the theme you are given, respond with ONLY a JSON object:
+{"score": <int -5..5>, "reasoning": "<why this score, referencing the review data and any past-run trend you were given, e.g. 'this has been the top complaint for 3 runs straight'>", "next_step": "<if score is negative: a concrete, prioritized action the owner can take; if positive: what to keep doing/protect>", "vs_competitors": "<one sentence on how this compares with the named competitors on this theme, or an empty string if you were given no competitors or none of them relate to it>"}"""
 
 FALLBACK = json.dumps(
     {
         "score": 0,
         "reasoning": "LLM unavailable, defaulted to neutral.",
         "next_step": "Retry analysis once Groq is reachable.",
+        "vs_competitors": "",
     }
 )
 
 
 def analyze_theme(theme: dict, memory: HindsightMemory, business: str = "",
-                  period: str = "this week") -> dict:
-    past_context = memory.recall_context(f"past feedback about {theme['name']}")
+                  period: str = "this week", before_week: int | None = None,
+                  market: str = "") -> dict:
+    """market: market.context_for_analyst() text, or "" when competitors
+    weren't scanned."""
+    past_context = memory.recall_context(f"past feedback about {theme['name']}",
+                                         before_week=before_week)
     context_block = "\n".join(f"- {c}" for c in past_context) or "No past runs recorded yet."
 
     samples = "\n".join(f"- {s}" for s in theme.get("samples", []))
@@ -64,23 +77,45 @@ def analyze_theme(theme: dict, memory: HindsightMemory, business: str = "",
         f"Mentions in this period: {theme.get('count')}\n"
         f"Sample reviews:\n{samples}\n\n"
         f"Relevant memory from past runs:\n{context_block}"
+        + (f"\n\nWhat customers say about nearby competitors:\n{market}" if market else "")
     )
 
     raw = call_llm(SYSTEM_PROMPT, user_prompt, fallback=FALLBACK)
-
-    try:
-        result = json.loads(raw)
-    except json.JSONDecodeError:
-        result = {"score": 0, "reasoning": raw, "next_step": "Could not parse structured output; review manually."}
-
+    result = {**json.loads(FALLBACK), "degraded": True} if raw == FALLBACK else _parse(raw)
     return {**theme, **result}
 
 
+def _parse(raw: str) -> dict:
+    """Coerce the model's reply into {score: int -5..5, reasoning, next_step,
+    degraded}. Callers format score with :+d and sort on it, so a "-3" string,
+    a 2.5, or a missing key used to crash the run after every paid API call had
+    already been made. A reply we can't use is marked degraded rather than
+    passed off as a real neutral 0."""
+    try:
+        result = json.loads(strip_code_fences(raw))
+        if not isinstance(result, dict):
+            raise TypeError(f"expected a JSON object, got {type(result).__name__}")
+        score = max(-5, min(5, round(float(result["score"]))))
+        return {"score": score,
+                "reasoning": str(result.get("reasoning", "")),
+                "next_step": str(result.get("next_step", "")),
+                "vs_competitors": str(result.get("vs_competitors") or ""),
+                "degraded": False}
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError, OverflowError):  # Overflow: "score": Infinity
+        return {"score": 0,
+                "reasoning": f"Could not parse the model's reply: {raw[:300]}",
+                "next_step": "Could not parse structured output; review manually.",
+                "vs_competitors": "",
+                "degraded": True}
+
+
 def analyze_week(themes: list[dict], memory: HindsightMemory, business: str = "",
-                 period: str = "this week") -> list[dict]:
+                 period: str = "this week", before_week: int | None = None,
+                 market: str = "") -> list[dict]:
     """business/period default to run_week()'s weekly framing, so its existing
-    call site is unchanged; analyse_shop.py passes a shop name and date span."""
-    return [analyze_theme(theme, memory, business, period) for theme in themes]
+    call site is unchanged; analyse_shop.py passes a shop name and date span.
+    before_week: only recall weeks earlier than this (see recall_context)."""
+    return [analyze_theme(theme, memory, business, period, before_week, market) for theme in themes]
 
 
 if __name__ == "__main__":
@@ -104,7 +139,7 @@ if __name__ == "__main__":
         },
     ]
 
-    with HindsightMemory() as memory:
+    with HindsightMemory("Analyst Selftest App", bank_id="feedback-analyser-selftest") as memory:
         analyzed = analyze_week(mock_themes, memory)
         for theme in analyzed:
             print(f"\n{theme['name']} -> score {theme['score']}")

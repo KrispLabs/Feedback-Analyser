@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Feedback Analyser</title>
+<meta name="description" content="Turns public reviews for a business into scored, explained themes, and remembers every run.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.8'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.34' stop-color='%2378C0E0'/%3E%3Cstop offset='.78' stop-color='%233A4DE0'/%3E%3Cstop offset='1' stop-color='%23192BC2'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='14' fill='url(%23g)'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<a class="skip" href="#demo">Skip to the workspace</a>
+
+<div class="navbar wrap">
+  <nav class="nav" aria-label="Page">
+    <a class="brand" href="#top"><span class="orb" aria-hidden="true"></span><span>Feedback Analyser</span></a>
+    <div class="navlinks">
+      <a href="#proof">What it answers</a>
+      <a href="#how">How it works</a>
+      <a href="#demo">Workspace</a>
+      <a href="#roi">Cost</a>
+      <a href="#pilot">Run it</a>
+    </div>
+    <a class="apichip well wait" id="apiChip" href="#pilot"><i></i><span id="apiText">checking API</span></a>
+    <a class="btn primary" href="#demo" data-focus-form>Analyse a business</a>
+  </nav>
+</div>
+
+<main id="top">
+  <!-- HERO BENTO: copy 7x2 | fix first 5 / protect 5 · filtered 4 | memory 3 | sources 5 -->
+  <section class="wrap hero-b">
+    <div class="bento" id="stack" aria-label="Feedback Analyser at a glance">
+      <div class="tile clay b-copy">
+        <p class="kicker">Customer feedback analyser · built on <b>Hindsight</b> memory</p>
+        <h1 class="display">Feedback that <em>remembers.</em></h1>
+        <p class="lede">Give it a business name and a location. It reads the public reviews, throws away the junk, groups what's left into themes and scores each one from −5 to +5 with a reason and a next step. Every run is remembered, so the next one can say what got better and what got worse.</p>
+        <div class="hero-ctas">
+          <a class="btn primary" href="#demo" data-focus-form><span data-ic="spark"></span>Analyse a business</a>
+          <a class="link" href="#proof">See the three questions it answers <span data-ic="arrow"></span></a>
+        </div>
+      </div>
+
+      <button class="mcard clay-sm drop b-m1" id="mFix" style="animation-delay:.05s"></button>
+      <button class="mcard clay-sm drop b-m2" id="mKeep" style="animation-delay:.14s"></button>
+      <button class="mcard clay-sm drop b-m3" id="mFilt" style="animation-delay:.23s"></button>
+
+      <div class="tile clay b-orb">
+        <div class="hero-orb" aria-hidden="true" id="heroOrb"><div class="orb"></div><i class="eye l"></i><i class="eye r"></i></div>
+        <p class="orb-num" id="orbNum"></p>
+        <p class="hero-note" id="heroNote"></p>
+      </div>
+
+      <div class="tile well b-src sources" aria-label="Sources it reads">
+        <div style="display:grid;gap:10px">
+          <p class="kicker">Reads from</p>
+          <h3>Four sources, one memory.</h3>
+        </div>
+        <div class="src-list"><span class="src">Google Maps reviews</span><span class="src">Google Play reviews</span><span class="src">App Store reviews</span><span class="src">CSV datasets</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROOF BENTO: fix first 7x2 | protect 5 / recalled 5 · memory copy 5 | run over run 7 -->
+  <section class="sec wrap" id="proof">
+    <div class="sec-head">
+      <h2 class="h2">Three questions a star rating <em>can't answer.</em></h2>
+      <p class="lede">An average of 4.3★ says nothing about what to do on Monday. The analyser turns reviews into a ranked list of what to fix and what to protect, and remembers each run so the next one can say what changed.</p>
+    </div>
+    <div class="bento">
+      <article class="tile clay p-a">
+        <div class="copy">
+          <p class="kicker">Triage · −5</p>
+          <h3 class="h3">What should I <em>fix first?</em></h3>
+          <p class="body">Every theme gets a score from −5 to +5. The negatives are problems ranked by urgency, and −5 is the one to work on before anything else.</p>
+        </div>
+        <div class="bigstat" id="pfBig"></div>
+        <div class="chartbox well"><div class="chart-scroll" id="pfScores"></div></div>
+        <div class="memo well" id="pfMemo"></div>
+      </article>
+
+      <article class="tile clay p-b">
+        <div class="copy">
+          <p class="kicker">Protect · +5</p>
+          <h3 class="h3">What should I <em>not break?</em></h3>
+          <p class="body">The positives are strengths ranked by how much they matter. +5 is the single best thing, the one to keep exactly as it is.</p>
+        </div>
+        <div class="beliefs" id="pfKeep"></div>
+      </article>
+
+      <article class="tile clay p-c" aria-label="What memory recalled">
+        <div class="memo well" id="pfRecall"></div>
+        <div class="chartbox well"><div class="chart-scroll" id="pfTrend"></div></div>
+        <div class="cap-row" id="pfTrendCap"></div>
+      </article>
+
+      <article class="tile clay p-d">
+        <div class="copy">
+          <p class="kicker">Memory</p>
+          <h3 class="h3">Is it getting <em>better or worse?</em></h3>
+          <p class="body">Themes get reworded between runs: “pricing and affordability” one month, “pricing reasonableness” the next. Hindsight's recall is semantic, so it bridges the rename and the Analyst still cites the earlier figure.</p>
+        </div>
+        <div class="memo well" id="pfScope"></div>
+      </article>
+
+      <article class="tile clay p-e" aria-label="Run over run">
+        <div class="bigstat" id="pfRuns"></div>
+        <div class="beliefs" id="pfCompare"></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- HOW BENTO: heading 6 | stage 3 | stage 3 · three stages of 4 · memory verbs 12 -->
+  <section class="sec wrap" id="how">
+    <div class="bento">
+      <div class="tile plain h-head">
+        <h2 class="h2">Five stages, one <em>memory.</em></h2>
+        <p class="lede">Each stage hands the next a plain list, so any one can be swapped without touching the others. The last two are why a run can explain a change instead of just reporting it.</p>
+      </div>
+      <ol class="rail-b five" id="rail"></ol>
+      <div class="verbs clay tile b-verbs">
+        <div class="copy">
+          <p class="kicker">What Hindsight memory adds</p>
+          <h3 class="h3">Every run becomes <em>evidence</em> for the next one.</h3>
+        </div>
+        <ul id="verbs"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- WORKSPACE: one clay tray holding a bento of panes -->
+  <section class="sec wrap" id="demo">
+    <div class="demo-head">
+      <div>
+        <p class="kicker" id="demoKicker">Workspace · connected to your API</p>
+        <h2 class="h2">Analyse a business in <em>one run.</em></h2>
+        <p class="lede">Enter a name and a location. A run takes 60–120 seconds: it scrapes the reviews, then makes one Groq call per theme. Drag the timeline to compare earlier runs.</p>
+      </div>
+      <button class="btn" id="playBtn" disabled><span data-ic="play"></span><span>Replay runs</span></button>
+    </div>
+
+    <div class="tray clay bento">
+      <div class="pane t-tool">
+        <div class="toolbar">
+          <div class="ws-name"><span class="blob" id="wsIcon" data-ic="store"></span><span><b id="wsName">No business yet</b><small id="wsSub">enter one below</small></span></div>
+          <div class="mem-count well"><span data-ic="brain" style="width:18px;height:18px;display:inline-grid"></span><b id="memTag">—</b><span id="memSub">memory tag appears after a run</span></div>
+          <span class="xbadge" id="xBadge" hidden>example data</span>
+          <span class="grow"></span>
+          <span class="last" id="lastRun">no runs yet</span>
+          <button class="btn primary" id="runBtn" type="submit" form="runForm"><span data-ic="spark"></span><span>Run analysis</span></button>
+        </div>
+
+        <form class="runform" id="runForm" novalidate>
+          <div class="rf-top">
+            <div class="segctl well" role="group" aria-label="What to analyse">
+              <button type="button" data-mode="shop" aria-pressed="true">Business lookup</button>
+              <button type="button" data-mode="week" aria-pressed="false">Gathered weeks</button>
+            </div>
+            <span class="grow"></span>
+            <div class="segctl well" role="group" aria-label="Review provider" data-for="shop">
+              <button type="button" data-provider="serpapi" aria-pressed="true">SerpApi</button>
+              <button type="button" data-provider="places" aria-pressed="false">Google Places · max 5</button>
+            </div>
+            <label class="tick" data-for="shop"><input type="checkbox" id="fStore" checked><span>Remember this run</span></label>
+            <label class="tick" title="Also read what customers say about similar places nearby, so each theme is scored against the local market"><input type="checkbox" id="fCompare" checked><span>Compare with competitors</span></label>
+          </div>
+          <div class="rf-grid">
+            <div class="fld f-name" data-for="shop"><label for="fName">Business name</label><input class="txt" id="fName" autocomplete="off" placeholder="Niloufer Cafe"></div>
+            <div class="fld f-loc" data-for="shop"><label for="fLoc">Location</label><input class="txt" id="fLoc" autocomplete="off" placeholder="Hitech City, Hyderabad"></div>
+            <div class="fld f-mon" data-for="shop"><label for="fMonths">Max age <output id="oMonths" for="fMonths"></output></label><input type="range" id="fMonths" min="0" max="24" step="1" value="0"></div>
+            <div class="fld f-lim" data-for="shop"><label for="fLimit">Newest reviews <output id="oLimit" for="fLimit"></output></label><input type="range" id="fLimit" min="10" max="1000" step="10" value="400"></div>
+            <div class="fld f-run" data-for="shop"><label for="fRun">Run #</label><input class="txt" id="fRun" type="number" min="1" step="1" value="1"></div>
+            <div class="fld f-biz" data-for="week" hidden><label for="fBiz">Business</label><input class="txt" id="fBiz" autocomplete="off" placeholder="Leave blank for the one in gatherer_config.json"></div>
+            <div class="fld f-week" data-for="week" hidden><label for="fWeek">Week #</label><input class="txt" id="fWeek" type="number" min="1" step="1" value="1"></div>
+            <div class="fld f-comp" data-for="shop"><label for="fComp">Competitors <output>optional · separate with ;</output></label><input class="txt" id="fComp" autocomplete="off" placeholder="Leave blank to find the 3 busiest similar places nearby, or: Chai Point; Cafe Bahar, Basheerbagh"></div>
+          </div>
+          <p class="rf-msg" id="rfMsg" role="status" hidden></p>
+          <div class="recent" id="recent" hidden></div>
+        </form>
+        <div class="prog" id="prog" aria-label="Pipeline stages"></div>
+      </div>
+
+      <div class="brief-copy pane t-brief" id="agentBox">
+        <p class="kicker" id="briefEyebrow">Briefing</p>
+        <p class="headline" id="headline"></p>
+        <div class="warns" id="warns" role="status" hidden></div>
+        <div class="hls" id="hls"></div>
+      </div>
+      <div class="kpis pane t-kpis" id="kpis"></div>
+
+      <div class="tl pane">
+        <div class="tl-head"><b id="tlLabel">No runs yet</b><span id="tlHint">Each run of a business lands here.</span></div>
+        <div class="track" id="track">
+          <div class="fill" id="fill"></div>
+          <div id="pins"></div>
+          <label for="runSel" class="sr">Selected run</label>
+          <input type="range" id="runSel" min="0" max="0" step="1" value="0" disabled>
+          <div class="ticks" id="ticks"></div>
+        </div>
+      </div>
+
+      <section class="themes pane t-themes" aria-label="Themes">
+        <div class="pane-head"><h3>Themes</h3><p id="themesSub">worst first</p></div>
+        <ol class="tlist" id="tlist"></ol>
+      </section>
+
+      <section class="detail pane t-detail" id="detail" aria-label="Theme detail">
+        <div class="d-empty" id="detailEmpty">
+          <span class="blob" aria-hidden="true" data-ic="gauge"></span>
+          <h2>Why each theme scored the way it did.</h2>
+          <p>Run an analysis and pick a theme to see the Analyst's reasoning, what customers said, the next step, and how the theme moved since earlier runs.</p>
+        </div>
+        <div id="detailBody" style="display:grid;gap:22px" hidden>
+          <header class="d-head">
+            <span class="blob" id="dIcon" aria-hidden="true"></span>
+            <div style="min-width:0"><h2 id="dName"></h2><p class="d-meta" id="dMeta"></p></div>
+            <div class="ring" id="dRing"></div>
+          </header>
+          <div class="d-stats" id="dStats"></div>
+          <figure class="chartfig well">
+            <figcaption id="dChartCap"></figcaption>
+            <div class="chart-scroll" id="dChart"></div>
+          </figure>
+          <div class="verdict clay-sm" id="dVerdict"></div>
+          <section class="d-sec"><h3>Why it scored this way</h3><p class="why-note" id="dWhyNote"></p><p class="why-text" id="dWhy"></p><div class="relchips" id="dRel"></div></section>
+          <section class="d-sec" id="dVsSec" hidden><h3>Against competitors</h3><p class="why-text" id="dVs"></p></section>
+          <section class="d-sec"><h3>What customers are saying</h3><div class="quotes" id="dQuotes"></div></section>
+          <section class="d-sec"><h3>Suggested next step</h3><ul class="steps" id="dSteps"></ul></section>
+          <section class="d-sec"><h3>Earlier runs <span class="count" id="dMemCount"></span></h3><ol class="mem" id="dMem"></ol></section>
+          <details class="trace"><summary>What the backend did for this theme</summary><pre class="well" id="dTrace"></pre></details>
+        </div>
+      </section>
+
+      <section class="inbox pane t-inbox" id="inbox" aria-label="Review stream">
+        <div class="pane-head">
+          <h3>Review stream</h3>
+          <div style="display:flex;align-items:center;gap:10px"><span class="live"><i></i><span id="liveLabel">replaying</span></span><button class="btn iconbtn" id="streamBtn" aria-label="Pause the review stream"></button></div>
+        </div>
+        <div class="counters">
+          <div class="well"><b id="cQuotes">0</b><span>quotes</span></div>
+          <div class="well"><b id="cSpam">0</b><span>filtered out</span></div>
+          <div class="well"><b id="cThemed">0</b><span>themes</span></div>
+        </div>
+        <ul class="stream" id="stream" aria-label="Quotes from this run"></ul>
+      </section>
+
+      <section class="market pane t-market" id="market" aria-label="Local market">
+        <div class="pane-head"><h3>Local market</h3><p id="mktSub">what nearby competitors' customers praise and criticise</p></div>
+        <div class="mkt-grid" id="mktGrid"></div>
+      </section>
+
+      <section class="ask pane" aria-label="Ask about this run">
+        <div class="ask-left">
+          <p class="kicker">Ask about this run</p>
+          <h3>Ask about anything in the result.</h3>
+          <p>Answers come from the run you're looking at and the earlier runs saved in this browser: themes, scores, reasoning and quotes. Nothing new is sent to the API.</p>
+          <div class="qchips" id="qchips"></div>
+          <form class="askform well" id="askForm">
+            <label for="askInput" class="sr">Your question</label>
+            <input id="askInput" autocomplete="off" placeholder="What should I fix first?">
+            <button class="btn primary iconbtn" aria-label="Ask"><span data-ic="arrow"></span></button>
+          </form>
+        </div>
+        <div class="answer well" id="answer" aria-live="polite"></div>
+      </section>
+    </div>
+  </section>
+
+  <!-- COST BENTO: inputs 5x2 | hours 7 · searches 4 | groq 3 -->
+  <section class="sec wrap" id="roi">
+    <div class="sec-head">
+      <h2 class="h2">What a run <em>costs</em>, and what it saves.</h2>
+      <p class="lede">Every run spends real quota on SerpApi, Groq and Hindsight. Set your own numbers. A SerpApi search returns up to 20 reviews, and a run stops after 30 searches.</p>
+    </div>
+    <div class="bento">
+      <form class="inputs well tile r-in" id="roiForm">
+        <div class="inp"><label for="rBiz">Businesses you track <output id="oBiz" for="rBiz"></output></label><input type="range" id="rBiz" min="1" max="30" step="1" value="3"><small>Each one gets its own memory tag, so their histories never mix.</small></div>
+        <div class="inp"><label for="rRuns">Runs per business each month <output id="oRuns" for="rRuns"></output></label><input type="range" id="rRuns" min="1" max="8" step="1" value="2"></div>
+        <div class="inp"><label for="rLim">Reviews per run <output id="oLim" for="rLim"></output></label><input type="range" id="rLim" min="10" max="1000" step="10" value="400"><small id="rLimNote"></small></div>
+        <div class="inp"><label for="rMin">Minutes to read and tag 100 reviews <output id="oMin" for="rMin"></output></label><input type="range" id="rMin" min="10" max="120" step="1" value="38"></div>
+      </form>
+      <div class="tile clay r-hours">
+        <div class="o"><b id="vHours">0 hours</b><span>of reading handed back every month</span></div>
+        <p class="fine">Estimate only. Hours = reviews gathered ÷ 100 × minutes ÷ 60 × runs. A run stops after 30 SerpApi searches, so it gathers about 588 reviews with text at most. A max age stops it sooner.</p>
+      </div>
+      <div class="tile clay-sm r-money"><div class="o sm"><b id="vSearch">0</b><span id="vSearchNote">SerpApi searches a month</span></div></div>
+      <div class="tile clay-sm r-fix"><div class="o sm"><b id="vGroq">0</b><span>Groq calls a month: 1 to find themes, 1 per theme</span></div></div>
+    </div>
+  </section>
+
+  <!-- RUN IT BENTO: heading 8 | call to action 4 · three steps of 4 -->
+  <section class="sec wrap" id="pilot">
+    <div class="bento">
+      <div class="tile plain pl-head">
+        <h2 class="h2">Run it on your own business in <em>three steps.</em></h2>
+        <p class="lede">It only reads public reviews. The one thing it writes is your own Hindsight memory, so the next run has something to compare against.</p>
+      </div>
+      <div class="tile pl-cta">
+        <div style="display:grid;gap:10px">
+          <h3>Analyse your first business.</h3>
+          <p>A run takes 60–120 seconds and spends a few SerpApi searches and Groq calls.</p>
+        </div>
+        <div class="closing">
+          <a class="btn" href="#demo" data-focus-form><span data-ic="spark"></span>Open the workspace</a>
+          <a class="link" id="docsLink" href="/docs" target="_blank" rel="noopener">API docs <span data-ic="arrow"></span></a>
+        </div>
+      </div>
+      <ol class="weeks-b">
+        <li class="wkstep tile clay-sm"><span class="blob">1</span><h3>Add your keys</h3><p>Copy <code>.env.example</code> to <code>.env</code> and set <code>GROQ_API_KEY</code>, <code>HINDSIGHT_API_KEY</code> and <code>SERPAPI_API_KEY</code>.</p></li>
+        <li class="wkstep tile clay-sm"><span class="blob">2</span><h3>Start the API</h3><p><code>docker compose up</code>, or <code>uvicorn api:app --port 8000</code> from <code>backend/</code>. This page is served at the same address.</p></li>
+        <li class="wkstep tile clay-sm"><span class="blob">3</span><h3>Analyse</h3><p>Enter a name and a location. Run it again later with the next run number and the Analyst compares against the earlier runs.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <footer class="wrap"><div class="foot"><span>Feedback Analyser · memory by Hindsight</span><span id="footNote">Scores come from Groq. Quotes are real reviews that passed the Checker.</span></div></footer>
+</main>
+
+<div class="toast clay-sm" id="toast" role="status" aria-live="polite"><span class="blob" data-ic="check"></span><span id="toastText"></span></div>
+
+<script src="app.js"></script>
+</body>
+</html>

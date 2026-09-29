@@ -20,6 +20,7 @@ Keys come from the env var, keys.csv, or an `api_key` in the source config.
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,7 +28,7 @@ from datetime import date, timedelta
 from typing import Iterator
 
 from ..schema import Review, OWN
-from .base import Source
+from .base import SSL_CONTEXT, Source
 
 PLACES_SEARCH = "https://places.googleapis.com/v1/places:searchText"
 PLACES_DETAILS = "https://places.googleapis.com/v1/places/{place_id}"
@@ -40,14 +41,21 @@ SERPAPI_SORT = {"newest": "newestFirst", "relevant": "qualityScore",
                 "highest": "ratingHigh", "lowest": "ratingLow"}
 
 TIMEOUT = 30
+# Transient failures (timeouts, dropped connections, 429/5xx) get this many
+# retries with a short backoff before the request is given up on. 4xx other
+# than 429 (bad key, bad place id) never succeed on retry, so they fail at once.
+RETRIES = 2
 
 # Page 1 is always 8 results; SerpApi rejects `num` there but accepts up to 20
 # on later pages, so pages 2+ cost the same one search for twice the reviews.
 PAGE_SIZE = 20
 # Every page is one billable SerpApi search, and a shop whose reviews are mostly
 # star-only ratings can otherwise paginate a long way to reach `limit`. Stop
-# here regardless, so one run can't quietly eat a monthly quota.
-MAX_PAGES = 15
+# here regardless, so one run can't quietly eat a monthly quota. Sized for
+# analyse_shop's default of 400 text reviews: 8 + 20/page needs 21 pages even
+# if every review has text, and 30 covers shops where ~70% do. (15, the old cap,
+# topped out at 288 reviews.) A shop with fewer reviews stops early and pays less.
+MAX_PAGES = 30
 
 # SerpApi falls back to "a month ago" phrasing when a review has no iso_date.
 _RELATIVE = re.compile(r"(?:(\d+)|an?)\s+(minute|hour|day|week|month|year)s?\s+ago", re.I)
@@ -65,6 +73,10 @@ def parse_relative_date(value: str, today: date | None = None) -> str | None:
     amount = int(match.group(1)) if match.group(1) else 1
     days = amount * _DAYS_PER[match.group(2).lower()]
     return ((today or date.today()) - timedelta(days=days)).isoformat()
+
+
+def _norm_name(name: str) -> str:
+    return re.sub(r"[^\w]+", " ", (name or "").lower()).strip()
 
 
 class ShopSource(Source):
@@ -109,6 +121,7 @@ class ShopSource(Source):
         self.since = since
         self.pages_fetched = 0  # review PAGES fetched -- gates the max_pages loop below, nothing else
         self.searches_used = 0  # ALL billable SerpApi searches (lookup + pages) -- for cost reporting
+        self.place: dict = {}   # the Maps search hit this shop resolved to (serpapi, after fetch)
 
     @property
     def query(self) -> str:
@@ -142,13 +155,25 @@ class ShopSource(Source):
             "User-Agent": "Mozilla/5.0", **({"Content-Type": "application/json"} if data else {}),
             **(headers or {}),
         })
-        try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-                return json.load(resp)
-        except urllib.error.HTTPError as e:
-            # both APIs put the useful part ("API key not valid", quota) in the body
-            detail = e.read().decode("utf-8", "replace")[:400]
-            raise RuntimeError(f"{e.code} from {urllib.parse.urlsplit(url).netloc}: {detail}") from e
+        host = urllib.parse.urlsplit(url).netloc
+        for attempt in range(RETRIES + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=TIMEOUT, context=SSL_CONTEXT) as resp:
+                    return json.load(resp)
+            except urllib.error.HTTPError as e:
+                # both APIs put the useful part ("API key not valid", quota) in the body
+                detail = e.read().decode("utf-8", "replace")[:400]
+                if (e.code == 429 or e.code >= 500) and attempt < RETRIES:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(f"{e.code} from {host}: {detail}") from e
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                if attempt < RETRIES:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(f"could not reach {host}: {getattr(e, 'reason', e)}") from e
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"{host} returned something that isn't JSON: {e}") from e
 
     def _serpapi_get(self, **params) -> dict:
         url = f"{SERPAPI}?" + urllib.parse.urlencode({"hl": self.language, **params})
@@ -159,6 +184,38 @@ class ShopSource(Source):
 
     def fetch(self) -> Iterator[Review]:
         return self._serpapi() if self.provider == "serpapi" else self._places()
+
+    def similar_nearby(self, n: int = 3, min_reviews: int = 20) -> list[dict]:
+        """Up to n other places of the same kind near this one, busiest first:
+        the local market this shop competes in. One billable SerpApi search.
+
+        Needs the place this source resolved during fetch() (its Maps category
+        and coordinates), so call it after gathering, and only with provider
+        "serpapi" and no pinned place_id. Places with the same name are left
+        out: another branch of the same chain isn't a competitor."""
+        if self.provider != "serpapi":
+            raise RuntimeError("finding competitors needs the serpapi provider; "
+                               "name the competitors instead")
+        category = self.place.get("type") or (self.place.get("types") or [None])[0]
+        gps = self.place.get("gps_coordinates") or {}
+        if not category or gps.get("latitude") is None:
+            raise RuntimeError(f"Maps gave no category or location for {self.query!r}, "
+                               f"so there's nothing to search nearby for; name the competitors instead")
+        found = self._serpapi_get(engine="google_maps", type="search", q=category,
+                                  ll=f"@{gps['latitude']},{gps['longitude']},15z", api_key=self._key())
+        self.searches_used += 1  # billable, but not a review page -- must not gate max_pages
+        own_id, own_name = self.place.get("data_id"), _norm_name(self.name)
+        picks = []
+        for hit in found.get("local_results") or []:
+            name, reviews = hit.get("title") or "", hit.get("reviews") or 0
+            if (not hit.get("data_id") or hit["data_id"] == own_id or reviews < min_reviews
+                    or (own_name and own_name in _norm_name(name))):
+                continue
+            picks.append({"name": name, "place_id": hit["data_id"], "address": hit.get("address", ""),
+                          "rating": hit.get("rating"), "review_count": reviews,
+                          "category": hit.get("type") or category})
+        picks.sort(key=lambda c: -c["review_count"])
+        return picks[:n]
 
     # --- providers ----------------------------------------------------------
 
@@ -216,6 +273,7 @@ class ShopSource(Source):
             found = self._serpapi_get(engine="google_maps", type="search", q=self.query, api_key=key)
             self.searches_used += 1  # billable, but must NOT gate the max_pages loop below
             place = found.get("place_results") or (found.get("local_results") or [{}])[0]
+            self.place = place
             data_id = place.get("data_id")
             if not data_id:
                 raise RuntimeError(f"no place matched {self.query!r} -- try a fuller address, "
@@ -243,19 +301,25 @@ class ShopSource(Source):
                 break
             page_all_older = bool(self.since)
             for review in reviews:
-                # star-only rating with no text: nothing for the Checker or the
-                # Scorer to read, so skip it rather than spend `limit` on it
-                if not (review.get("snippet") or "").strip():
-                    continue
                 when = review.get("iso_date") or review.get("iso_date_of_last_edit")
                 extra = dict(shop)
                 if not when:
                     when = parse_relative_date(review.get("date", ""))
                     extra["date_approx"] = True  # derived from "3 months ago", not exact
-                if self.since and when:
-                    if when[:10] < self.since:
+                # Date check comes BEFORE the text check: the stop-paginating
+                # decision needs every review on the page, and star-only ones
+                # are most of them. Checked after, a page of recent star-only
+                # ratings looked "all older" and ended the run with 0 reviews.
+                # An undated review can't prove the page is old, so it counts
+                # as in range; max_pages still bounds the cost.
+                if self.since:
+                    if when and when[:10] < self.since:
                         continue          # older than the window: drop it
                     page_all_older = False  # something on this page is in range
+                # star-only rating with no text: nothing for the Checker or the
+                # Scorer to read, so skip it rather than spend `limit` on it
+                if not (review.get("snippet") or "").strip():
+                    continue
                 user = review.get("user") or {}
                 yield Review(
                     source="google_maps",

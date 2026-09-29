@@ -1,2 +1,4 @@
 hindsight-client
 groq
+fastapi
+uvicorn[standard]

@@ -106,6 +106,27 @@ Pushed to `Chaitanya` in pairs of phases to minimise integration errors.
 **Next up (not started)** — swap stubs for the real Gatherer/Scorer modules once
 teammates push them; end-to-end test across all 4 demo weeks; dashboard hookup.
 
+## App API (for the frontend)
+
+This project is becoming an app — a friend owns the frontend, we own the backend. The
+frontend is not our job; this section is the contract so it can be built against without
+needing to read our code.
+
+- `backend/api.py`: FastAPI wrapper around `run_week()`. Runs on port 8000
+  (`uvicorn api:app --host 0.0.0.0 --port 8000`, or via `docker compose up`).
+- `GET /health` — `{"status": "ok"}`. Liveness check.
+- `POST /weeks/{week_number}/run` — runs the full pipeline for that week (gather → check →
+  score → analyze → store) and returns the dashboard payload:
+  `{"week": int, "rejected_count": int, "rejected_by_reason": {reason: count}, "themes": [{"name", "count", "samples": [str], "score": -5..5, "reasoning": str, "next_step": str}]}`.
+  404 if no data exists for that week number.
+- CORS is currently open (`allow_origins=["*"]`) to unblock local frontend dev — tighten
+  to the real frontend origin before the demo/submission.
+- Verified locally: `GET /health` → 200, `POST /weeks/1/run` → full themed, scored result
+  with clean UTF-8 (no encoding issues — double-checked raw response bytes after an initial
+  false alarm from a Windows terminal display artifact, not a real bug).
+- Not yet re-verified in Docker after this change (daemon wasn't running) — the Dockerfile
+  now runs `uvicorn` instead of the old test script; `docker-compose.yml` exposes port 8000.
+
 ## Keys / secrets
 - Stored in `keys.csv` (gitignored) — Groq (LLM) and Hindsight Cloud API keys.
 - Never commit `keys.csv`.

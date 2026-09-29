@@ -6,3 +6,5 @@ services:
         required: false
     volumes:
       - ./backend:/app
+    ports:
+      - "8000:8000"

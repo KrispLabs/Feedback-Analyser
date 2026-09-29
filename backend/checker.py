@@ -9,7 +9,6 @@ from collections import Counter
 MIN_WORDS = 4
 VOWEL_RATIO_THRESHOLD = 0.2
 REPEATED_WORD_RATIO_THRESHOLD = 0.5
-MAX_CONSONANT_RUN = 4
 
 
 def _normalize(text: str) -> str:
@@ -29,23 +28,17 @@ def _is_repeated_phrase(text: str) -> bool:
 
 
 def _is_gibberish(text: str) -> bool:
-    """Heuristic, not a dictionary check: low vowel ratio or a long run of
-    consecutive consonants in any single word. Simple by design per the brief,
-    so it can occasionally misfire on real words with dense consonant
-    clusters (e.g. "strength") — acceptable tradeoff for a lightweight filter."""
+    """Heuristic, not a dictionary check: flags text with an unusually low
+    vowel ratio across the whole review (real English averages ~38-40%
+    vowels; random keyboard-mash text like "asdkj aksjd" comes in under 20%).
+    A per-word "long consonant run" rule was tried and removed: it flagged
+    ordinary words like "months" (m-o-n-t-h-s has 4 consonants in a row) as
+    gibberish, incorrectly rejecting every real review that used them."""
     letters = [c for c in text if c.isalpha()]
-    if len(letters) >= 6:
-        vowels = sum(1 for c in letters if c in "aeiou")
-        if (vowels / len(letters)) < VOWEL_RATIO_THRESHOLD:
-            return True
-
-    for word in text.split():
-        run = 0
-        for c in word:
-            run = run + 1 if c not in "aeiou" else 0
-            if run >= MAX_CONSONANT_RUN:
-                return True
-    return False
+    if len(letters) < 6:
+        return False
+    vowels = sum(1 for c in letters if c in "aeiou")
+    return (vowels / len(letters)) < VOWEL_RATIO_THRESHOLD
 
 
 def check_reviews(reviews: list[dict]) -> tuple[list[dict], int, dict]:

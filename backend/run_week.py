@@ -2,28 +2,43 @@
 gather -> check -> score -> analyze -> store — and returns results for the
 dashboard.
 
-The Gatherer and Scorer are owned by teammates. Until their real modules
-land, they're stubbed here with the interfaces agreed in NOTES.md, so
-swapping in the real implementations is a one-line change."""
+Gather now uses the real Gatherer (backend/gatherer/, pulled in from the
+sarthak branch): Telco customer feedback + Verizon/AT&T/Xfinity Play Store
+reviews, see NOTES.md. Score is still a stub for the Scorer's real
+theme-grouping/llm.py."""
 
 import json
 import sys
 
+import pandas as pd
+
 from analyst import analyze_week
-from checker import check_reviews, load_reviews_csv
+from checker import check_reviews
+from gatherer.gatherer import DEFAULT_OUT, load as load_gathered
 from memory import HindsightMemory
 
 THEME_KEYWORDS = {
-    "login issues": ["login", "log in", "crash"],
-    "loading speed": ["load", "loading", "slow"],
-    "dark mode": ["dark mode"],
+    "billing & pricing": ["monthly charge", "expensive", "price", "bill", "cost"],
+    "internet reliability": ["downtime", "reliable", "outage", "slow", "speed"],
+    "customer service": ["customer service", "support", "technician", "help desk", "representative"],
+    "app login issues": ["sign in", "log in", "login", "password", "blank"],
 }
 
 
-def stub_gather_week(week_number: int) -> list[dict]:
-    """Placeholder for the Gatherer's real function. Returns cleaned review
-    rows: id, source, date, rating, text."""
-    return load_reviews_csv(f"data/week_{week_number}_mock.csv")
+def _available_weeks() -> list[str]:
+    """Chronological ISO weeks present in the Gatherer's cleaned output."""
+    df = pd.read_csv(DEFAULT_OUT, usecols=["week"], dtype=str)
+    return sorted(df["week"].dropna().unique())
+
+
+def gather_week(week_number: int) -> list[dict]:
+    """week_number is 1-indexed into the chronological ISO weeks the real
+    Gatherer produced (e.g. week 1 = the earliest week gathered)."""
+    weeks = _available_weeks()
+    if not (1 <= week_number <= len(weeks)):
+        raise FileNotFoundError(f"week {week_number} out of range (1..{len(weeks)} available)")
+    df = load_gathered(DEFAULT_OUT, week=weeks[week_number - 1])
+    return df.to_dict("records")
 
 
 def stub_score_themes(verified_reviews: list[dict]) -> list[dict]:
@@ -39,7 +54,7 @@ def stub_score_themes(verified_reviews: list[dict]) -> list[dict]:
 
 
 def run_week(week_number: int) -> dict:
-    raw_reviews = stub_gather_week(week_number)
+    raw_reviews = gather_week(week_number)
     verified, rejected_count, rejected_by_reason = check_reviews(raw_reviews)
     themes = stub_score_themes(verified)
 

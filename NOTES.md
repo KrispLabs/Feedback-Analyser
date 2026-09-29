@@ -162,7 +162,11 @@ needing to read our code.
 - [x] Phase 3 — Analyst + shared Groq helper (`backend/llm.py`, `backend/analyst.py`)
 - [x] Phase 4 — `run_week()` orchestrator (`backend/run_week.py`), verified end-to-end
 - [x] Real Gatherer pulled in from `sarthak` branch (`backend/gatherer/`) — see below
-- [ ] Swap `run_week()`'s stubbed gather/score for the real Gatherer + Scorer
+- [x] `run_week()` wired to the real Gatherer (gather is real; score is still our stub
+      pending the real Scorer)
+- [x] Critical Checker bug found + fixed against real data (see below)
+- [x] Cross-batch Hindsight learning proven against real data (see below)
+- [ ] Swap `run_week()`'s stubbed score for the real Scorer
 - [ ] Dashboard hookup
 
 ## Gatherer (data) — `backend/gatherer/`
@@ -193,3 +197,48 @@ filtering is left to Checker. Raw Kaggle files go in `data/raw/` (gitignored).
   covers ~2026-07-10 .. 2026-09-27, real dates and 1-5 ratings.
 - Skipped: `telco_prep.csv` (same text lowercased) and `telco_noisy_feedback_prep.csv`
   (75% missing text, half the rest truncated) — the noisy one could be a Checker test set.
+
+## Wiring the real Gatherer into run_week()
+
+`run_week(week_number)` keeps its existing integer interface (so the API contract for the
+frontend doesn't change) but now resolves `week_number` to the Nth chronological ISO week
+present in `data/cleaned/reviews.csv` (1 = earliest week gathered), loads it via
+`gatherer.load()`, and runs the real pipeline on it. `stub_score_themes` was updated with
+keywords relevant to this actual Telco/ISP domain (billing & pricing, internet reliability,
+customer service, app login issues) — the old placeholder keywords (login/dark mode) were
+written against imaginary mock data and don't match real Telco feedback at all.
+
+## Critical Checker bug found on real data (fixed)
+
+Running the Checker on the first 300 real reviews rejected **all 300** as "gibberish" —
+obviously wrong for genuine, well-formed customer feedback. Root cause: the gibberish
+rule's "4+ consecutive consonants in a word" check flagged the ordinary word **"months"**
+(m‑o‑n‑t‑h‑s has 4 consonants in a row after the o), and "months" appears constantly in
+real reviews ("customer for 22 months"). That rule was removed from `checker.py` —
+the vowel-ratio check alone already correctly catches genuine gibberish (verified against
+the original mock dataset, same 6/12 result as before) without this false-positive risk.
+**Lesson: our mock dataset in Phase 1 wasn't adversarial enough to catch this — a rule can
+look correct against a small hand-built test set and still break badly at real-data scale.**
+
+## Proof Hindsight is learning across real batches (`backend/demo_hindsight_learning.py`)
+
+To demonstrate — not just claim — that the Analyst's reasoning improves with memory, this
+script runs the real gathered data (sorted chronologically, oldest first) in two batches
+through a **dedicated demo Hindsight bank** (`feedback-analyser-real-demo-v2`, separate
+from the production bank in `memory.py`, so results are never contaminated by earlier
+mock/test memories written during Phases 2-4):
+- **Batch 1** (first 300 reviews, clean bank, no prior history): billing & pricing +5 (297
+  mentions), internet reliability +5 (194 mentions), customer service +4 (7 mentions). No
+  negative themes yet.
+- **Batch 2** (next 550 reviews, Analyst can now recall batch 1): billing & pricing +4,
+  reasoning explicitly says *"464, up from 297"* — a number pulled directly from batch 1's
+  stored memory. Internet reliability +5, reasoning cites *"Past-week analysis flagged
+  reliability as the company's standout strength (194 positive mentions)"* — again batch
+  1's exact figure. A new theme, **app login issues (-5)**, appears for the first time and
+  is correctly identified as the sole urgent problem since nothing else in that batch is
+  negative.
+- This is real, verifiable proof the recall → prompt → reasoning loop works on genuine
+  data, not just our earlier synthetic tests. Note: an earlier run of this same script
+  (bank `feedback-analyser-real-demo`, no `-v2`) was contaminated by the "months" Checker
+  bug above (batch 1 wrongly rejected as 100% gibberish) — that bank's contents are stale
+  and should be ignored; `-v2` is the valid one.

@@ -12,10 +12,11 @@ BASE_URL = "https://api.hindsight.vectorize.io"
 
 
 class HindsightMemory:
-    def __init__(self):
+    def __init__(self, bank_id: str = BANK_ID):
         keys = load_keys()
+        self.bank_id = bank_id
         self._client = Hindsight(base_url=BASE_URL, api_key=keys["HINDSIGHT_API_KEY"])
-        self._client.create_bank(bank_id=BANK_ID, name="Feedback Analyser")
+        self._client.create_bank(bank_id=bank_id, name=f"Feedback Analyser ({bank_id})")
 
     def __enter__(self):
         return self
@@ -35,7 +36,7 @@ class HindsightMemory:
             f"{json.dumps(week_result.get('themes', []), indent=2)}"
         )
         self._client.retain(
-            bank_id=BANK_ID,
+            bank_id=self.bank_id,
             content=content,
             context=f"Week {week_number} feedback synthesis",
             tags=[f"week:{week_number}"],
@@ -45,7 +46,7 @@ class HindsightMemory:
     def recall_context(self, query: str, budget: str = "mid") -> list[str]:
         """Returns past memory text relevant to the query, for the Analyst to
         reason over trends (e.g. a theme recurring across weeks)."""
-        result = self._client.recall(bank_id=BANK_ID, query=query, budget=budget)
+        result = self._client.recall(bank_id=self.bank_id, query=query, budget=budget)
         return [memory.text for memory in result.results]
 
 

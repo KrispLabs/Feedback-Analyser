@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from analyse_shop import DEFAULT_LIMIT, analyse_shop
 from errors import PipelineError
+from market import DEFAULT_COMPETITORS, MAX_COMPETITORS
 from memory import BANK_ID
 from run_week import run_week
 from scorer import SAMPLE_SIZE
@@ -80,6 +81,14 @@ class ShopRequest(BaseModel):
                           description="serpapi = hundreds of reviews; places = Google's API, max 5")
     store: bool = Field(True, description="Write the result to Hindsight for trend recall")
     run_number: int = Field(1, ge=1, description="Numbers this run so later runs compare against it")
+    compare: bool = Field(False, description="Also analyse nearby competitors, so each theme is "
+                                             "scored against the local market (costs ~13 more SerpApi searches)")
+    competitors: list[str] = Field(default_factory=list, max_length=MAX_COMPETITORS,
+                                   examples=[["Chai Point", "Cafe Bahar, Basheerbagh"]],
+                                   description="Competitors to compare with; implies compare. "
+                                               "Empty = find the busiest similar places nearby")
+    competitor_count: int = Field(DEFAULT_COMPETITORS, ge=1, le=MAX_COMPETITORS,
+                                  description="How many nearby competitors to find when none are named")
 
 
 @app.get("/health")
@@ -98,16 +107,19 @@ def analyse(req: ShopRequest):
     """
     return analyse_shop(req.name, req.location, provider=req.provider, limit=req.limit,
                         months=req.months, store=req.store, run_number=req.run_number,
-                        verbose=False)
+                        verbose=False, compare=req.compare, competitors=req.competitors,
+                        competitor_count=req.competitor_count)
 
 
 @app.post("/weeks/{week_number}/run")
-def run(week_number: int, business: str | None = None):
+def run(week_number: int, business: str | None = None, compare: bool = False):
     """Runs the full pipeline for one ISO week of one business's already-gathered
     reviews and returns the result the dashboard renders: rejected count, themes,
     scores, reasoning, next steps. `business` defaults to the one in
-    gatherer_config.json; competitor (market) reviews are never mixed in."""
-    return run_week(week_number, business)
+    gatherer_config.json. Competitor (market) reviews are never mixed into the
+    themes; with compare=true they're summarised separately and the Analyst
+    scores each theme against them."""
+    return run_week(week_number, business, compare=compare)
 
 
 # Mounted last so it never shadows an API route or /docs. FRONTEND_DIR points

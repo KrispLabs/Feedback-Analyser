@@ -27,6 +27,7 @@ from errors import ConfigError, NothingToAnalyse, PipelineError, UpstreamError
 from gatherer.gatherer import DEFAULT_OUT, gather, write
 from gatherer.sources import REGISTRY
 from gatherer.sources.shop import MAX_PAGES
+import market as mkt
 from memory import HindsightMemory
 from scorer import extract_themes
 
@@ -35,6 +36,11 @@ WIDTH = 78
 # quiet shop has too few reviews in 3 months to find themes, and a busy one has
 # thousands. See MAX_PAGES in shop.py for what this costs in SerpApi searches.
 DEFAULT_LIMIT = 400
+
+
+def bizname_for(name: str, location: str) -> str:
+    # name + location, so two branches of one chain keep separate histories
+    return f"{name}, {location}" if location else name
 
 
 def _quiet(*args) -> None:
@@ -47,7 +53,13 @@ def wrap(text: str, indent: str = "      ") -> str:
 
 def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int = DEFAULT_LIMIT,
                  store: bool = True, run_number: int = 1, max_pages: int = MAX_PAGES,
-                 months: int = 0, verbose: bool = True) -> dict:
+                 months: int = 0, verbose: bool = True, compare: bool = False,
+                 competitors: list[str] | None = None,
+                 competitor_count: int = mkt.DEFAULT_COMPETITORS) -> dict:
+    """compare: also scan the local market -- the competitors named in
+    `competitors`, or else the `competitor_count` busiest places of the same
+    kind nearby -- and let the Analyst score each theme against them.
+    Naming competitors implies compare."""
     """Raises NothingToAnalyse, UpstreamError or ConfigError (errors.py) for
     the failures a caller should expect. Anything short of fatal -- a provider
     dying partway through, the CSV not being writable, Hindsight being down --
@@ -143,16 +155,36 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
     for t in themes:
         say(f"                 {t['name'][:46]:<46} {t['count']:>4} mentions")
 
+    # 3b. SIMILAR MARKET ---------------------------------------------------
+    market = None
+    if compare or competitors:
+        rule("3b/5 Reading nearby competitors' reviews")
+        found, discovered = mkt.find_competitors(source, competitors or [], location,
+                                                 n=max(1, min(competitor_count, mkt.MAX_COMPETITORS)),
+                                                 warn=warn)
+        say(f"      found    : {', '.join(c['name'] for c in found) or 'none'}"
+            + (" (nearby, same category)" if discovered and found else ""))
+        groups, pages = mkt.gather_competitors(found, location, provider, since, warn=warn)
+        if pages:
+            say(f"      cost     : {pages} more billable SerpApi searches")
+        meta = {c["name"]: c for c in found}
+        summary = mkt.summarise(bizname_for(name, location), groups, meta, warn=warn)
+        for c in summary:
+            say(f"      {c['name']}: {c['reviews_used']} reviews · "
+                f"+ {'; '.join(p['point'] for p in c['strengths']) or '-'} · "
+                f"- {'; '.join(p['point'] for p in c['weaknesses']) or '-'}")
+        market = {"discovered": discovered, "competitors": summary}
+
     # 4 + 5. ANALYSE AND STORE ----------------------------------------------
     rule("4/5  Scoring each theme (-5..+5) with reasoning")
-    # name + location, so two branches of one chain keep separate histories
-    business = f"{name}, {location}" if location else name
+    business = bizname_for(name, location)
     with HindsightMemory(business) as memory:
         if memory.available:
             say(f"      memory   : Hindsight bank {memory.bank_id!r}, scoped to {memory.tag!r}\n")
         period = (f"{dated.min()} to {dated.max()}" if len(dated) else
                   (f"the last {months} {plural}" if months else "all time"))
-        analyzed = analyze_week(themes, memory, business=business, period=period)
+        analyzed = analyze_week(themes, memory, business=business, period=period,
+                                market=mkt.context_for_analyst(market["competitors"]) if market else "")
         memory_failed_early = memory.error is not None  # after: recall can fail partway
         if memory_failed_early:
             warn(f"{memory.error}; scored without past-run trends, and this run isn't stored.")
@@ -168,7 +200,7 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
         result = {"week": run_number, "business": name, "location": location, "period": period,
                   "reviews_gathered": len(reviews), "reviews_verified": len(verified),
                   "rejected_count": rejected_count, "rejected_by_reason": by_reason,
-                  "themes": analyzed, "warnings": warnings}
+                  "themes": analyzed, "market": market, "warnings": warnings}
 
         rule("5/5  Storing for next time")
         # keyed by day as well as run number: re-running today replaces
@@ -222,6 +254,10 @@ def main():
     ap.add_argument("--max-pages", type=int, default=MAX_PAGES,
                     help=f"cap on billable SerpApi searches (default: {MAX_PAGES})")
     ap.add_argument("--no-store", action="store_true", help="don't write to Hindsight")
+    ap.add_argument("--compare", action="store_true",
+                    help="also analyse the busiest similar places nearby, as the local market")
+    ap.add_argument("--competitor", action="append", default=[], dest="competitors",
+                    help="a competitor to compare with (repeatable); implies --compare")
     args = ap.parse_args()
 
     try:
@@ -229,7 +265,8 @@ def main():
         location = args.location if args.location is not None else input("Location      : ").strip()
         analyse_shop(name, location, provider=args.provider, limit=args.limit,
                      store=not args.no_store, run_number=args.run_number,
-                     max_pages=args.max_pages, months=args.months)
+                     max_pages=args.max_pages, months=args.months,
+                     compare=args.compare, competitors=args.competitors)
     except PipelineError as e:
         sys.exit(f"\n  {e}\n")
     except (KeyboardInterrupt, EOFError):

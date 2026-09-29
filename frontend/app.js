@@ -163,7 +163,8 @@ function normResult(res){
       count: Math.max(0, parseInt(t?.count, 10) || 0),
       score: Number.isFinite(raw) ? Math.max(-5, Math.min(5, raw)) : 0,
       samples: (Array.isArray(t?.samples) ? t.samples : []).map(String).filter(s => s.trim()),
-      reasoning, next_step: next, fallback: t?.degraded === true || FALLBACK_RE.test(reasoning + ' ' + next)
+      reasoning, next_step: next, vs: String(t?.vs_competitors ?? '').trim(),
+      fallback: t?.degraded === true || FALLBACK_RE.test(reasoning + ' ' + next)
     };
   }).sort((a,b) => a.score - b.score || b.count - a.count);  // README: sort ascending, worst first
   const by = res?.rejected_by_reason && typeof res.rejected_by_reason === 'object' ? res.rejected_by_reason : {};
@@ -172,8 +173,20 @@ function normResult(res){
     rejected_count: parseInt(res?.rejected_count, 10) || 0, rejected_by_reason: by, themes,
     gathered: res?.reviews_gathered != null && Number.isFinite(+res.reviews_gathered) ? +res.reviews_gathered : null,
     verified: res?.reviews_verified != null && Number.isFinite(+res.reviews_verified) ? +res.reviews_verified : null,
-    warnings: (Array.isArray(res?.warnings) ? res.warnings : []).map(String).filter(Boolean)
+    warnings: (Array.isArray(res?.warnings) ? res.warnings : []).map(String).filter(Boolean),
+    market: normMarket(res?.market)
   };
+}
+// result.market: null when competitors weren't scanned
+function normMarket(m){
+  if (!m || typeof m !== 'object') return null;
+  const pts = a => (Array.isArray(a) ? a : []).map(p => typeof p === 'string' ? {point:p, evidence:''} : {point:String(p?.point ?? ''), evidence:String(p?.evidence ?? '')}).filter(p => p.point.trim());
+  const num = v => v != null && Number.isFinite(+v) ? +v : null;
+  return {discovered: m.discovered === true, competitors: (Array.isArray(m.competitors) ? m.competitors : []).map(c => ({
+    name: String(c?.name ?? 'Unnamed competitor'), address: String(c?.address ?? ''), rating: num(c?.rating),
+    review_count: num(c?.review_count), reviews_used: num(c?.reviews_used),
+    strengths: pts(c?.strengths), weaknesses: pts(c?.weaknesses), degraded: c?.degraded === true
+  }))};
 }
 const sampleOf = R => R.verified == null ? null : Math.min(SAMPLE_SIZE, R.verified);
 const bizLabel = R => R.location ? `${R.business}, ${R.location}` : R.business;
@@ -336,18 +349,18 @@ const EXAMPLE = [
         reasoning:'Six reviewers mention crowded seating. A real complaint, but lower priority than wait times and pricing.',
         next_step:'Rearrange the back room to add two more small tables.'}
     ]}},
-  {mode:'shop', run:2, at: Date.UTC(2026, 8, 29, 8, 40), ms:84000, stored:true, request:{...EX_REQ, run_number:2}, res:{
+  {mode:'shop', run:2, at: Date.UTC(2026, 8, 29, 8, 40), ms:84000, stored:true, request:{...EX_REQ, run_number:2, compare:true}, res:{
     week:2, business:'Tempo Café', location:'Example City', period:'2026-07-01 to 2026-09-28', rejected_count:11, rejected_by_reason:{too_short:8, duplicate:2, gibberish:1},
     themes:[
       {name:'Card machine outages at checkout', count:5, score:-5, samples:['Card reader was down again, had to walk to an ATM.','Could not pay by card twice this month. Cash only sign taped to the till.'],
         reasoning:'Five reviewers in this period could not pay by card, and nothing like it was recorded before, so it is new. Customers who cannot pay leave without buying, which makes this the single most urgent problem.',
-        next_step:'Replace or service the card terminal this week and keep a backup mobile reader behind the counter.'},
+        next_step:'Replace or service the card terminal this week and keep a backup mobile reader behind the counter.', vs_competitors:'Grind House reviewers specifically praise contactless payment that always works, so customers who hit the outage have an easy alternative nearby.'},
       {name:'Pastry prices', count:10, score:-4, samples:['Pastries keep getting more expensive.','Love the coffee, but $6.50 for a muffin is too much.'],
         reasoning:'Pricing complaints rose from 8 mentions in the previous run to 10, and reviewers now quote specific prices. The trend is getting worse, not better.',
-        next_step:'Launch the coffee-and-pastry combo now and review pastry portion sizes against the price.'},
+        next_step:'Launch the coffee-and-pastry combo now and review pastry portion sizes against the price.', vs_competitors:'Crumb & Co. is praised for a five-dollar coffee-and-croissant combo, which makes Tempo\'s pastry prices stand out more.'},
       {name:'Weekend queue times', count:7, score:-3, samples:['The weekend wait is better than before but still 10+ minutes.','Saturday line moved faster with the extra barista.'],
         reasoning:'Down from 11 mentions in the previous run to 7, and several reviewers say the weekend wait has improved. Still a real problem, but less urgent than before.',
-        next_step:'Keep the second weekend barista and add the pre-order pickup point to cut waits further.'},
+        next_step:'Keep the second weekend barista and add the pre-order pickup point to cut waits further.', vs_competitors:'Grind House is praised for fast weekend service, while Crumb & Co. has the same peak-time complaint.'},
       {name:'Cramped seating', count:6, score:-2, samples:['Tables are squeezed together, hard to have a conversation.','Always a struggle to find a seat after 10am.'],
         reasoning:'Six mentions, the same as the previous run. A steady, lower-priority complaint.',
         next_step:'Go ahead with rearranging the back room to add more small tables.'},
@@ -356,8 +369,16 @@ const EXAMPLE = [
         next_step:'Protect this by keeping experienced baristas on the busiest shifts.'},
       {name:'Espresso and cold brew quality', count:16, score:5, samples:['Still the best cold brew in town.','Consistently great espresso, never had a bad shot here.'],
         reasoning:'Sixteen mentions praise the coffee, up from 14 in the previous run, and it is still the most praised thing about the café by a wide margin.',
-        next_step:'Keep the beans, recipes and espresso training unchanged.'}
-    ]}}
+        next_step:'Keep the beans, recipes and espresso training unchanged.', vs_competitors:'Neither competitor is praised for its coffee the way Tempo is, so this is what sets the café apart locally.'}
+    ],
+    market:{discovered:true, competitors:[
+      {name:'Grind House', address:'14 Mill Road, Example City', rating:4.4, review_count:612, reviews_used:57, degraded:false,
+        strengths:[{point:'Fast weekend service', evidence:'In and out in five minutes even on Saturday.'}, {point:'Contactless payment always works', evidence:'Tap to pay, never had an issue.'}],
+        weaknesses:[{point:'Burnt-tasting espresso', evidence:'Coffee tastes bitter and burnt.'}, {point:'Noisy and cramped', evidence:'Too loud to work here.'}]},
+      {name:'Crumb & Co.', address:'2 Station Square, Example City', rating:4.2, review_count:388, reviews_used:52, degraded:false,
+        strengths:[{point:'Cheap pastry combos', evidence:'Coffee and a croissant for five dollars.'}, {point:'Plenty of seating', evidence:'Always a table free.'}],
+        weaknesses:[{point:'Watery cold brew', evidence:'Cold brew was weak and watery.'}, {point:'Slow at peak times', evidence:'Waited 20 minutes on a Sunday.'}]}
+    ]}}}
 ];
 
 /* ---------- charts (the design's chart, with runs on the x axis and the score in the pill) ---------- */
@@ -628,13 +649,17 @@ function readForm(){
   if (state.mode === 'shop') {
     const name = $('#fName').value.trim(), loc = $('#fLoc').value.trim();
     if (!name) return {error:'Enter a business name first.', focus:'#fName'};
-    const run = Math.max(1, parseInt($('#fRun').value, 10) || 1);
+    const run = Math.max(1, parseInt($('#fRun').value, 10) || 1), compare = $('#fCompare').checked;
     return {mode:'shop', path:'/shops/analyse', run, label: loc ? `${name}, ${loc}` : name,
-      body:{name, location:loc, months:+$('#fMonths').value, limit:+$('#fLimit').value, provider:state.provider, store:$('#fStore').checked, run_number:run}};
+      body:{name, location:loc, months:+$('#fMonths').value, limit:+$('#fLimit').value, provider:state.provider, store:$('#fStore').checked, run_number:run,
+        compare, competitors: compare ? $('#fComp').value.split(';').map(s => s.trim()).filter(Boolean).slice(0, 5) : []}};
   }
   const week = parseInt($('#fWeek').value, 10), biz = $('#fBiz').value.trim();
   if (!(week >= 1)) return {error:'Enter a week number from 1 up.', focus:'#fWeek'};
-  return {mode:'week', path:`/weeks/${week}/run${biz ? '?business=' + encodeURIComponent(biz) : ''}`, run:week, label: biz || 'the default business', body:null, request:{week, business: biz || null}};
+  const compare = $('#fCompare').checked, qs = new URLSearchParams();
+  if (biz) qs.set('business', biz);
+  if (compare) qs.set('compare', 'true');
+  return {mode:'week', path:`/weeks/${week}/run${qs.size ? '?' + qs : ''}`, run:week, label: biz || 'the default business', body:null, request:{week, business: biz || null, compare}};
 }
 // the next run number for whatever is typed, from this browser's history
 let hintT;
@@ -654,12 +679,14 @@ function hintRun(){
 function fillForm(e){
   const last = e.runs[e.runs.length - 1], q = last?.request || {};
   setMode(e.mode);
+  if (q.compare != null) { $('#fCompare').checked = !!q.compare; syncCompare(); }
   if (e.mode === 'shop') {
     $('#fName').value = q.name ?? e.name ?? ''; $('#fLoc').value = q.location ?? e.location ?? '';
     if (q.months != null) $('#fMonths').value = q.months;
     if (q.limit != null) $('#fLimit').value = q.limit;
     if (q.provider) setProvider(q.provider);
     if (q.store != null) $('#fStore').checked = !!q.store;
+    $('#fComp').value = Array.isArray(q.competitors) ? q.competitors.join('; ') : '';
     $('#fRun').value = (last?.run || 0) + 1;
     renderMonths(); renderLimit();
   } else {
@@ -836,11 +863,14 @@ function renderDetail(typed){
   $('#dChart').innerHTML = runsChart(seriesFor(t), state.idx, g.c, `${t.name}: mentions per run`);
   $('#dVerdict').innerHTML = verdict(t, R);
 
-  $('#dWhyNote').textContent = t.fallback ? "This is analyst.py's fallback text, not reasoning." : `The Analyst's reasoning for ${runLabel(rec).toLowerCase()}. It was given this theme's quotes plus what Hindsight recalled about earlier runs of this business.`;
+  $('#dWhyNote').textContent = t.fallback ? "This is analyst.py's fallback text, not reasoning." : `The Analyst's reasoning for ${runLabel(rec).toLowerCase()}. It was given this theme's quotes plus what Hindsight recalled about earlier runs of this business${R.market?.competitors.length ? ', and what customers say about nearby competitors' : ''}.`;
   typed ? typeInto($('#dWhy'), t.reasoning || 'No reasoning came back.', 10) : setText($('#dWhy'), t.reasoning || 'No reasoning came back.');
+  $('#dVsSec').hidden = !t.vs || t.fallback;
+  $('#dVs').textContent = t.vs;
   const citing = cites(t).length;
   $('#dRel').innerHTML = `<span class="relchip"><b>period</b>${esc(fmtPeriod(R.period))}</span>`
     + (citing ? `<span class="relchip"><b>memory</b>cites an earlier run</span>` : '')
+    + (R.market?.competitors.length ? `<span class="relchip"><b>market</b>scored against ${plural(R.market.competitors.length, 'competitor')}</span>` : '')
     + `<span class="relchip"><b>${rec.stored ? 'stored' : 'not stored'}</b>${rec.stored ? `as week:${rec.run}` : 'memory was off'}</span>`;
   $('#dQuotes').innerHTML = t.samples.length
     ? t.samples.map(q => `<blockquote class="quote well"><p>“${esc(q)}”</p><footer>${ic('bubble')}<b>Verified review</b> · passed the Checker</footer></blockquote>`).join('')
@@ -927,7 +957,7 @@ let inView = false;
 new IntersectionObserver(es => { inView = es[0].isIntersecting; }, {threshold:.05}).observe($('#inbox'));
 
 /* ---------- ask: answered from the result on screen, no extra API call ---------- */
-const QCHIPS = ['What should I fix first?', 'What should I protect?', 'What changed since the last run?', 'Why were reviews filtered out?'];
+const QCHIPS = ['What should I fix first?', 'What should I protect?', 'What are competitors doing better?', 'What changed since the last run?', 'Why were reviews filtered out?'];
 function themeAnswer(t, how){
   return {steps:[how, `read the Analyst's reasoning for “${trunc(t.name, 40)}”`], go:t.id,
     a:`${t.name} scored ${sgn(t.score)} from ${plural(t.count, 'mention')}. ${t.reasoning}${t.next_step ? ` Next step: ${t.next_step}` : ''}`};
@@ -941,6 +971,16 @@ function answerFor(q, rec){
     return {steps:[read, `rejected_by_reason → ${rs.map(([r,n]) => `${r} ${n}`).join(', ') || 'none'}`], a: R.rejected_count
       ? `The Checker threw out ${plural(R.rejected_count, 'review')} before scoring: ${rs.map(([r,n]) => `${n} ${reasonOf(r).n.toLowerCase()} (${reasonOf(r).d})`).join(', ')}. It uses fixed rules, not an LLM, so filtering costs nothing and gives the same answer every time.`
       : 'Nothing was filtered out in this run. Every gathered review passed the Checker.'};
+  }
+  if (/compet|rival|market|nearby|other (shop|place|caf|business)|neighbo/i.test(q)) {
+    const M = R.market, list = (M?.competitors || []).filter(c => !c.degraded);
+    if (!M) return {steps:[read, 'result.market → not scanned'], a:`This run didn't look at competitors. Tick “Compare with competitors” and run ${bizLabel(R)} again to see what similar places nearby do well and badly.`};
+    if (!list.length) return {steps:[read, 'result.market → no competitor summarised'], a:'Competitors were scanned in this run, but none of their reviews could be summarised. The warnings on the briefing say why.'};
+    const vs = real.filter(t => t.vs), lead = vs.sort((a,b) => a.score - b.score)[0];
+    const good = list.map(c => c.strengths.length ? `${c.name} is praised for ${c.strengths.map(p => p.point.toLowerCase()).join(', ')}` : '').filter(Boolean);
+    const bad = list.map(c => c.weaknesses.length ? `${c.name} is criticised for ${c.weaknesses.map(p => p.point.toLowerCase()).join(', ')}` : '').filter(Boolean);
+    return {steps:[read, `result.market → ${plural(list.length, 'competitor')}`, `themes with a competitor note → ${vs.length}`], go: lead?.id,
+      a:[...good, ...bad].join('. ') + '.' + (lead ? ` Against your themes, ${lead.name} (${sgn(lead.score)}): ${lead.vs}` : '')};
   }
   if (byName) return {...themeAnswer(byName.t, `match “${trunc(q, 40)}” → “${trunc(byName.t.name, 40)}”`), steps:[read, `match theme name → “${trunc(byName.t.name, 40)}”`, `read the Analyst's reasoning`]};
   if (/chang|since|last run|previous|earlier|trend|better|worse|compar|improv|moved/i.test(q)) {
@@ -1009,7 +1049,7 @@ $('#roiForm').addEventListener('submit', e => e.preventDefault());
 /* ---------- loading runs ---------- */
 function renderAll(typed){
   renderHero(); renderProof(); renderRail(); renderTool(); renderProgDone(); renderBriefing(typed); renderKpis();
-  buildTrack(); renderTrack(); renderThemes(); renderDetail(typed ? true : undefined); resetStream(); renderAskIdle(); renderRecent();
+  buildTrack(); renderTrack(); renderThemes(); renderDetail(typed ? true : undefined); resetStream(); renderAskIdle(); renderRecent(); renderMarket();
   $('#footNote').textContent = state.example ? 'The example café and its reviews are fictional.' : 'Scores come from Groq. Quotes are real reviews that passed the Checker.';
 }
 function pickTheme(prevTheme){
@@ -1043,8 +1083,30 @@ function setRun(i, typed){
   state.idx = Math.max(0, Math.min(state.runs.length - 1, i));
   state.theme = pickTheme(before);
   renderHero(); renderProof(); renderRail(); renderTool(); renderProgDone(); renderBriefing(typed); renderKpis();
-  renderTrack(); renderThemes(); renderDetail(typed ? true : undefined); resetStream(); renderAskIdle();
+  renderTrack(); renderThemes(); renderDetail(typed ? true : undefined); resetStream(); renderAskIdle(); renderMarket();
 }
+
+/* ---------- local market ---------- */
+function renderMarket(){
+  const rec = cur(), M = rec?.r.market, list = M?.competitors || [];
+  $('#mktSub').textContent = !M ? "what nearby competitors' customers praise and criticise"
+    : `${plural(list.length, 'competitor')}${M.discovered ? ', the busiest similar places nearby' : ''} · ${runLabel(rec).toLowerCase()}`;
+  const pts = (a, cls, none) => a.length
+    ? `<ul class="mkt-list ${cls}">${a.map(p => `<li><span>${esc(p.point)}</span>${p.evidence ? `<q>${esc(p.evidence)}</q>` : ''}</li>`).join('')}</ul>`
+    : `<p class="empty">${none}</p>`;
+  $('#mktGrid').innerHTML = !rec
+    ? `<p class="empty">Run an analysis with “Compare with competitors” ticked to see what similar places nearby do well and badly. The Analyst scores each of your themes against them.</p>`
+    : !M ? `<p class="empty">This run didn't compare with competitors. Tick “Compare with competitors” and run it again.</p>`
+    : !list.length ? `<p class="empty">No competitor could be read for this run. The warnings above say why.</p>`
+    : list.map(c => `<article class="mkt-card well">
+        <header><h4>${esc(c.name)}</h4><span class="meta">${c.rating != null ? `${c.rating}★` : ''}${c.reviews_used != null ? ` · ${plural(c.reviews_used, 'review')} read` : c.review_count != null ? ` · ${plural(c.review_count, 'review')}` : ''}</span></header>
+        ${c.address ? `<p class="addr">${esc(c.address)}</p>` : ''}
+        ${c.degraded ? `<p class="empty">Groq didn't summarise this competitor's reviews in this run.</p>` : `
+        <h5>Customers praise</h5>${pts(c.strengths, 'good', 'Nothing stood out.')}
+        <h5>Customers complain about</h5>${pts(c.weaknesses, 'bad', 'Nothing stood out.')}`}
+      </article>`).join('');
+}
+function syncCompare(){ $('#fComp').disabled = !$('#fCompare').checked; }
 function selectTheme(id, scroll){
   if (!cur()?.r.themes.some(t => t.id === id)) return;
   state.theme = id; renderThemes(); renderDetail(true);
@@ -1136,6 +1198,8 @@ $('#fName').addEventListener('input', hintRun);
 $('#fLoc').addEventListener('input', hintRun);
 $('#runSel').addEventListener('input', e => { stopPlay(); setRun(+e.target.value, false); });
 $('#runSel').addEventListener('change', () => { renderBriefing(true); });
+$('#fCompare').addEventListener('change', syncCompare);
+syncCompare();
 $('#streamBtn').addEventListener('click', () => setStream(!state.stream));
 let playT;
 function stopPlay(){ state.playing = false; clearTimeout(playT); $('#playBtn').innerHTML = `${ic('play')}<span>Replay runs</span>`; }

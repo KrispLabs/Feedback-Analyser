@@ -39,20 +39,32 @@ the things its customers actually mention. Never assume it is an app: do not ref
 - -5: the single most urgent problem — the owner must work on this instantly, before anything else.
 
 Describe the data using the period you are given, not "this week" unless that is the
-period. For the theme you are given, respond with ONLY a JSON object:
-{"score": <int -5..5>, "reasoning": "<why this score, referencing the review data and any past-run trend you were given, e.g. 'this has been the top complaint for 3 runs straight'>", "next_step": "<if score is negative: a concrete, prioritized action the owner can take; if positive: what to keep doing/protect>"}"""
+period.
+
+You may also be told what customers of nearby competitors praise and criticise. Use it
+to judge this theme against the local market: a weakness competitors have too matters
+less than one they have solved, and a strength competitors lack is worth protecting.
+If a competitor does this theme well, the next step can borrow from what they do.
+Only name a competitor when their reviews actually cover this theme.
+
+For the theme you are given, respond with ONLY a JSON object:
+{"score": <int -5..5>, "reasoning": "<why this score, referencing the review data and any past-run trend you were given, e.g. 'this has been the top complaint for 3 runs straight'>", "next_step": "<if score is negative: a concrete, prioritized action the owner can take; if positive: what to keep doing/protect>", "vs_competitors": "<one sentence on how this compares with the named competitors on this theme, or an empty string if you were given no competitors or none of them relate to it>"}"""
 
 FALLBACK = json.dumps(
     {
         "score": 0,
         "reasoning": "LLM unavailable, defaulted to neutral.",
         "next_step": "Retry analysis once Groq is reachable.",
+        "vs_competitors": "",
     }
 )
 
 
 def analyze_theme(theme: dict, memory: HindsightMemory, business: str = "",
-                  period: str = "this week", before_week: int | None = None) -> dict:
+                  period: str = "this week", before_week: int | None = None,
+                  market: str = "") -> dict:
+    """market: market.context_for_analyst() text, or "" when competitors
+    weren't scanned."""
     past_context = memory.recall_context(f"past feedback about {theme['name']}",
                                          before_week=before_week)
     context_block = "\n".join(f"- {c}" for c in past_context) or "No past runs recorded yet."
@@ -65,6 +77,7 @@ def analyze_theme(theme: dict, memory: HindsightMemory, business: str = "",
         f"Mentions in this period: {theme.get('count')}\n"
         f"Sample reviews:\n{samples}\n\n"
         f"Relevant memory from past runs:\n{context_block}"
+        + (f"\n\nWhat customers say about nearby competitors:\n{market}" if market else "")
     )
 
     raw = call_llm(SYSTEM_PROMPT, user_prompt, fallback=FALLBACK)
@@ -86,20 +99,23 @@ def _parse(raw: str) -> dict:
         return {"score": score,
                 "reasoning": str(result.get("reasoning", "")),
                 "next_step": str(result.get("next_step", "")),
+                "vs_competitors": str(result.get("vs_competitors") or ""),
                 "degraded": False}
     except (json.JSONDecodeError, TypeError, ValueError, KeyError, OverflowError):  # Overflow: "score": Infinity
         return {"score": 0,
                 "reasoning": f"Could not parse the model's reply: {raw[:300]}",
                 "next_step": "Could not parse structured output; review manually.",
+                "vs_competitors": "",
                 "degraded": True}
 
 
 def analyze_week(themes: list[dict], memory: HindsightMemory, business: str = "",
-                 period: str = "this week", before_week: int | None = None) -> list[dict]:
+                 period: str = "this week", before_week: int | None = None,
+                 market: str = "") -> list[dict]:
     """business/period default to run_week()'s weekly framing, so its existing
     call site is unchanged; analyse_shop.py passes a shop name and date span.
     before_week: only recall weeks earlier than this (see recall_context)."""
-    return [analyze_theme(theme, memory, business, period, before_week) for theme in themes]
+    return [analyze_theme(theme, memory, business, period, before_week, market) for theme in themes]
 
 
 if __name__ == "__main__":

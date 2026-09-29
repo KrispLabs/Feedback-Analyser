@@ -766,3 +766,22 @@ button.belief:hover{transform:translateY(-2px)}
 .memo.warn{max-width:none;font-size:13.5px;line-height:1.45;color:var(--ink-2)}
 .memo.warn .kicker{color:var(--t-alert)}
 .memo.warn .kicker i{background:var(--orange)}
+
+/* ---------- local market: one card per competitor ---------- */
+.f-comp{--c:12}
+.fld .txt:disabled{opacity:.5;cursor:not-allowed}
+.market{padding:20px 24px 24px;display:grid;gap:16px;align-content:start}
+.mkt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.mkt-card{padding:16px 18px;border-radius:20px;display:grid;gap:12px;align-content:start}
+.mkt-card header{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.mkt-card h4{font:600 16px var(--sans);min-width:0;overflow-wrap:anywhere}
+.mkt-card .meta{font:500 12px var(--mono);color:var(--ink-3);white-space:nowrap}
+.mkt-card .addr{font-size:12.5px;color:var(--ink-3);margin-top:-6px}
+.mkt-card h5{font:600 11.5px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
+.mkt-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.mkt-list li{display:grid;grid-template-columns:10px minmax(0,1fr);gap:4px 10px;font-size:13.5px}
+.mkt-list li::before{content:"";width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--dot)}
+.mkt-list.good{--dot:var(--green)}
+.mkt-list.bad{--dot:var(--orange)}
+.mkt-list q{grid-column:2;font-size:12.5px;color:var(--ink-3)}
+.market .empty{color:var(--ink-3);font-size:14px}

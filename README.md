@@ -148,6 +148,8 @@ python analyse_shop.py "Niloufer Cafe" "Hitech City" --limit 200 --months 6
 | `--max-pages N` | `30` | Ceiling on billable SerpApi searches, so one run can't drain your quota |
 | `--run N` | `1` | Numbers this run so later runs compare against it |
 | `--no-store` | off | Don't write to Hindsight |
+| `--compare` | off | Also analyse the 3 busiest similar places nearby (the local market) |
+| `--competitor NAME` | — | A competitor to compare with, repeatable; implies `--compare` |
 
 Each business should get its own Hindsight bank, or a cafe's themes pollute a
 telecom's recall:
@@ -186,7 +188,7 @@ ever disagree.
 Liveness check. Hits no external service.
 
 ```json
-{ "status": "ok" }
+{ "status": "ok", "bank_id": "feedback-analyser-v2", "sample_size": 50 }
 ```
 
 ### `POST /shops/analyse` — the main flow
@@ -202,6 +204,9 @@ Body:
 | `provider` | string | `"serpapi"` | `"serpapi"` or `"places"` |
 | `store` | bool | `true` | Write to Hindsight for trend recall |
 | `run_number` | int | `1` | Later runs compare against earlier ones |
+| `compare` | bool | `false` | Also read nearby competitors' reviews, and score each theme against the local market |
+| `competitors` | string[] | `[]` | Competitors to compare with (max 5), e.g. `["Chai Point", "Cafe Bahar, Basheerbagh"]`. A name with a comma is searched as given; otherwise `location` is added. Implies `compare`. Empty = find the busiest similar places nearby |
+| `competitor_count` | int | `3` | How many nearby competitors to find when none are named. 1–5 |
 
 ```bash
 curl -X POST http://localhost:8000/shops/analyse \
@@ -233,11 +238,38 @@ curl -X POST http://localhost:8000/shops/analyse \
       ],
       "reasoning": "All 12 mentions in the period specifically praise the chai and bun maska as the highlight of the cafe... indicating the single biggest strength right now.",
       "next_step": "Continue preparing the Irani tea and bun maska exactly as they are — maintain the same recipes, sourcing and preparation methods.",
+      "vs_competitors": "Cafe Bahar's reviews praise its biryani, not its tea, so this is what sets Niloufer apart nearby.",
       "degraded": false
     }
-  ]
+  ],
+  "market": {
+    "discovered": true,
+    "competitors": [
+      {
+        "name": "Cafe Bahar",
+        "address": "Basheerbagh, Hyderabad",
+        "rating": 4.2,
+        "review_count": 5400,
+        "reviews_used": 58,
+        "strengths": [{ "point": "Generous biryani portions", "evidence": "Biryani is huge and tasty" }],
+        "weaknesses": [{ "point": "Long waits at dinner", "evidence": "Waited 40 minutes for a table" }],
+        "degraded": false
+      }
+    ]
+  },
+  "stored": true,
+  "warnings": []
 }
 ```
+
+With `compare` on, the run finds competitors (one SerpApi search, busiest
+first; places sharing the business's name are skipped as other branches),
+reads up to 60 of each one's newest reviews through the Checker, and makes
+**one** Groq call for every competitor's strengths and weaknesses. The Analyst
+gets that summary with every theme, so its `reasoning`, `next_step` and
+`vs_competitors` can weigh the theme against the local market. Competitor
+reviews are never mixed into the business's own themes. Finding competitors
+nearby needs `provider: "serpapi"`; with `places`, name them in `competitors`.
 
 ### `POST /weeks/{week_number}/run`
 
@@ -245,7 +277,9 @@ Same payload shape, but for one ISO week of one business's gathered reviews.
 Optional query param `?business=Telco` (defaults to the `business` in
 `backend/gatherer_config.json`). `week_number` is 1-indexed into the weeks that
 business has reviews for (1 = earliest). Only its own reviews are analysed;
-competitor (`origin=market`) rows are never mixed in. Used for the
+competitor (`origin=market`) rows are never mixed in. With `?compare=true`,
+that week's market rows (the `market` sources in `gatherer_config.json`) are
+summarised into `market` as above, and the Analyst scores against them. Used for the
 weekly-trend view rather than one-off lookups. `location` is absent here.
 
 Hindsight memory is scoped per business too: a run only recalls that
@@ -270,6 +304,8 @@ business's past runs (shops are keyed by name + location).
 | `warnings` | string[] | Non-fatal problems: review fetching stopped early, Hindsight down, themes that couldn't be scored. Show them as a banner; the result is still usable |
 | `stored` | bool | `true` only if Hindsight actually kept this run (false when `store` was off, Hindsight failed, or no theme was really scored) |
 | `themes[].degraded` | bool | `true` = not a real score (Groq unavailable or an unusable reply); its `0` is a placeholder |
+| `themes[].vs_competitors` | string | How the theme compares with the local market. `""` without `compare`, or when no competitor relates to it |
+| `market` | object \| null | `null` without `compare`. `competitors[]`: `name`, `address`, `rating`, `review_count`, `reviews_used`, `strengths[]` / `weaknesses[]` (`point`, `evidence` quote), `degraded` (`true` = Groq didn't summarise it). `discovered`: found nearby rather than named |
 
 `themes` comes back unsorted — sort by `score` in the client. Split at zero for
 a two-column "Fix these / Protect these" layout.
@@ -345,8 +381,8 @@ Every run spends real quota, on three services:
 
 | Service | Free tier | Per run |
 |---|---|---|
-| Groq | 200,000 tokens/day | 1 call for themes + 1 per theme (~7–9 total) |
-| SerpApi | 250 searches/month | ~1 search per 20 reviews: up to 30 for the default 400 (fewer for small shops) |
+| Groq | 200,000 tokens/day | 1 call for themes + 1 per theme (~7–9 total), +1 for competitors with `compare` |
+| SerpApi | 250 searches/month | ~1 search per 20 reviews: up to 30 for the default 400 (fewer for small shops). `compare` adds up to 13: 1 to find competitors + at most 4 per competitor |
 | Hindsight | — | 1 store + 1 recall per theme |
 
 Guards already in place: `--max-pages` caps SerpApi searches per run; `--limit`
@@ -387,6 +423,7 @@ backend/
   checker.py           rule-based filter
   scorer.py            LLM theme discovery
   analyst.py           LLM scoring + reasoning
+  market.py            similar-market scan: find competitors, summarise their reviews
   memory.py            Hindsight store / recall
   llm.py               shared Groq helper: retries, rate-limit backoff, fallbacks
   config.py            key loading (env → keys.csv)

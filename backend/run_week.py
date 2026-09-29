@@ -23,7 +23,8 @@ from analyst import analyze_week
 from checker import check_reviews
 from errors import NothingToAnalyse, PipelineError, UpstreamError
 from gatherer.gatherer import DEFAULT_OUT, load as load_gathered
-from gatherer.schema import OWN
+from gatherer.schema import MARKET, OWN
+import market as mkt
 from memory import HindsightMemory
 from scorer import extract_themes
 
@@ -65,7 +66,24 @@ def gather_week(week_number: int, business: str) -> list[dict]:
     return df[df["week"] == weeks[week_number - 1]].to_dict("records")
 
 
-def run_week(week_number: int, business: str | None = None) -> dict:
+def market_week(week: str, business: str) -> dict[str, list[dict]]:
+    """Verified market (competitor) reviews gathered for one ISO week, by
+    competitor. Empty when nothing was gathered for the market."""
+    try:
+        df = load_gathered(DEFAULT_OUT, week=week, origin=MARKET)
+    except FileNotFoundError:
+        return {}
+    groups = {}
+    for name, g in df[df["business"] != business].groupby("business"):
+        verified, _, _ = check_reviews(g.to_dict("records"))
+        if verified:
+            groups[name] = verified
+    return groups
+
+
+def run_week(week_number: int, business: str | None = None, compare: bool = False) -> dict:
+    """compare: also summarise that week's market reviews (the competitors
+    gatherer_config.json gathers) and let the Analyst score against them."""
     business = business or default_business()
     raw_reviews = gather_week(week_number, business)
     dates = sorted(r["date"] for r in raw_reviews)
@@ -81,9 +99,20 @@ def run_week(week_number: int, business: str | None = None) -> dict:
         raise UpstreamError(f"the Scorer found no themes in {len(verified)} verified reviews; "
                            f"usually means the Groq call failed or hit a rate limit")
 
+    warnings, market = [], None
+    if compare:
+        groups = market_week(raw_reviews[0]["week"], business)
+        if not groups:
+            warnings.append(f"No competitor reviews were gathered for this week, so it's scored "
+                            f"without the market; add a \"market\" section to gatherer_config.json.")
+        meta = {name: {"review_count": len(rows)} for name, rows in groups.items()}
+        market = {"discovered": False,
+                  "competitors": mkt.summarise(business, groups, meta, warn=warnings.append)}
+
     with HindsightMemory(business) as memory:
         analyzed_themes = analyze_week(themes, memory, business=business, period=period,
-                                       before_week=week_number)
+                                       before_week=week_number,
+                                       market=mkt.context_for_analyst(market["competitors"]) if market else "")
         week_result = {
             "week": week_number,
             "business": business,
@@ -91,7 +120,8 @@ def run_week(week_number: int, business: str | None = None) -> dict:
             "rejected_count": rejected_count,
             "rejected_by_reason": rejected_by_reason,
             "themes": analyzed_themes,
-            "warnings": [],
+            "market": market,
+            "warnings": warnings,
         }
         week_result["stored"] = memory.store_week(week_number, week_result,
                                                   timestamp=datetime.fromisoformat(dates[0]).replace(tzinfo=timezone.utc))

@@ -75,6 +75,10 @@ def parse_relative_date(value: str, today: date | None = None) -> str | None:
     return ((today or date.today()) - timedelta(days=days)).isoformat()
 
 
+def _norm_name(name: str) -> str:
+    return re.sub(r"[^\w]+", " ", (name or "").lower()).strip()
+
+
 class ShopSource(Source):
     kind = "shop"
 
@@ -116,6 +120,7 @@ class ShopSource(Source):
         self.max_pages = max_pages
         self.since = since
         self.pages_fetched = 0  # billable searches used, for the caller to report
+        self.place: dict = {}   # the Maps search hit this shop resolved to (serpapi, after fetch)
 
     @property
     def query(self) -> str:
@@ -179,6 +184,38 @@ class ShopSource(Source):
     def fetch(self) -> Iterator[Review]:
         return self._serpapi() if self.provider == "serpapi" else self._places()
 
+    def similar_nearby(self, n: int = 3, min_reviews: int = 20) -> list[dict]:
+        """Up to n other places of the same kind near this one, busiest first:
+        the local market this shop competes in. One billable SerpApi search.
+
+        Needs the place this source resolved during fetch() (its Maps category
+        and coordinates), so call it after gathering, and only with provider
+        "serpapi" and no pinned place_id. Places with the same name are left
+        out: another branch of the same chain isn't a competitor."""
+        if self.provider != "serpapi":
+            raise RuntimeError("finding competitors needs the serpapi provider; "
+                               "name the competitors instead")
+        category = self.place.get("type") or (self.place.get("types") or [None])[0]
+        gps = self.place.get("gps_coordinates") or {}
+        if not category or gps.get("latitude") is None:
+            raise RuntimeError(f"Maps gave no category or location for {self.query!r}, "
+                               f"so there's nothing to search nearby for; name the competitors instead")
+        found = self._serpapi_get(engine="google_maps", type="search", q=category,
+                                  ll=f"@{gps['latitude']},{gps['longitude']},15z", api_key=self._key())
+        self.pages_fetched += 1
+        own_id, own_name = self.place.get("data_id"), _norm_name(self.name)
+        picks = []
+        for hit in found.get("local_results") or []:
+            name, reviews = hit.get("title") or "", hit.get("reviews") or 0
+            if (not hit.get("data_id") or hit["data_id"] == own_id or reviews < min_reviews
+                    or (own_name and own_name in _norm_name(name))):
+                continue
+            picks.append({"name": name, "place_id": hit["data_id"], "address": hit.get("address", ""),
+                          "rating": hit.get("rating"), "review_count": reviews,
+                          "category": hit.get("type") or category})
+        picks.sort(key=lambda c: -c["review_count"])
+        return picks[:n]
+
     # --- providers ----------------------------------------------------------
 
     def _places(self) -> Iterator[Review]:
@@ -234,6 +271,7 @@ class ShopSource(Source):
         if not data_id:
             found = self._serpapi_get(engine="google_maps", type="search", q=self.query, api_key=key)
             place = found.get("place_results") or (found.get("local_results") or [{}])[0]
+            self.place = place
             data_id = place.get("data_id")
             if not data_id:
                 raise RuntimeError(f"no place matched {self.query!r} -- try a fuller address, "

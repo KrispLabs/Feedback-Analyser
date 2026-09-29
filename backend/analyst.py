@@ -16,7 +16,7 @@ Score scale: -5 to +5, like a business owner triaging feedback.
 
 import json
 
-from llm import call_llm
+from llm import call_llm, strip_code_fences
 from memory import HindsightMemory
 
 SYSTEM_PROMPT = """You are an Analyst that scores customer-feedback themes on a \
@@ -52,8 +52,9 @@ FALLBACK = json.dumps(
 
 
 def analyze_theme(theme: dict, memory: HindsightMemory, business: str = "",
-                  period: str = "this week") -> dict:
-    past_context = memory.recall_context(f"past feedback about {theme['name']}")
+                  period: str = "this week", before_week: int | None = None) -> dict:
+    past_context = memory.recall_context(f"past feedback about {theme['name']}",
+                                         before_week=before_week)
     context_block = "\n".join(f"- {c}" for c in past_context) or "No past runs recorded yet."
 
     samples = "\n".join(f"- {s}" for s in theme.get("samples", []))
@@ -67,20 +68,38 @@ def analyze_theme(theme: dict, memory: HindsightMemory, business: str = "",
     )
 
     raw = call_llm(SYSTEM_PROMPT, user_prompt, fallback=FALLBACK)
-
-    try:
-        result = json.loads(raw)
-    except json.JSONDecodeError:
-        result = {"score": 0, "reasoning": raw, "next_step": "Could not parse structured output; review manually."}
-
+    result = {**json.loads(FALLBACK), "degraded": True} if raw == FALLBACK else _parse(raw)
     return {**theme, **result}
 
 
+def _parse(raw: str) -> dict:
+    """Coerce the model's reply into {score: int -5..5, reasoning, next_step,
+    degraded}. Callers format score with :+d and sort on it, so a "-3" string,
+    a 2.5, or a missing key used to crash the run after every paid API call had
+    already been made. A reply we can't use is marked degraded rather than
+    passed off as a real neutral 0."""
+    try:
+        result = json.loads(strip_code_fences(raw))
+        if not isinstance(result, dict):
+            raise TypeError(f"expected a JSON object, got {type(result).__name__}")
+        score = max(-5, min(5, round(float(result["score"]))))
+        return {"score": score,
+                "reasoning": str(result.get("reasoning", "")),
+                "next_step": str(result.get("next_step", "")),
+                "degraded": False}
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+        return {"score": 0,
+                "reasoning": f"Could not parse the model's reply: {raw[:300]}",
+                "next_step": "Could not parse structured output; review manually.",
+                "degraded": True}
+
+
 def analyze_week(themes: list[dict], memory: HindsightMemory, business: str = "",
-                 period: str = "this week") -> list[dict]:
+                 period: str = "this week", before_week: int | None = None) -> list[dict]:
     """business/period default to run_week()'s weekly framing, so its existing
-    call site is unchanged; analyse_shop.py passes a shop name and date span."""
-    return [analyze_theme(theme, memory, business, period) for theme in themes]
+    call site is unchanged; analyse_shop.py passes a shop name and date span.
+    before_week: only recall weeks earlier than this (see recall_context)."""
+    return [analyze_theme(theme, memory, business, period, before_week) for theme in themes]
 
 
 if __name__ == "__main__":

@@ -67,10 +67,18 @@ def run_week(week_number: int, business: str | None = None) -> dict:
     period = f"{dates[0]} to {dates[-1]}"
 
     verified, rejected_count, rejected_by_reason = check_reviews(raw_reviews)
+    if not verified:
+        raise LookupError(f"all {len(raw_reviews)} reviews for {business!r} week {week_number} "
+                          f"were rejected by the Checker ({rejected_by_reason})")
     themes = extract_themes(verified, rejected_count)
+    if not themes:
+        # empty is ambiguous (see analyse_shop.py) -- never store it as a real week
+        raise RuntimeError(f"the Scorer found no themes in {len(verified)} verified reviews; "
+                           f"usually means the Groq call failed or hit a rate limit")
 
     with HindsightMemory(business) as memory:
-        analyzed_themes = analyze_week(themes, memory, business=business, period=period)
+        analyzed_themes = analyze_week(themes, memory, business=business, period=period,
+                                       before_week=week_number)
         week_result = {
             "week": week_number,
             "business": business,

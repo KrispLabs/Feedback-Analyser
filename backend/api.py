@@ -77,3 +77,7 @@ def run(week_number: int, business: str | None = None):
         return run_week(week_number, business)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=f"No data found for week {week_number}: {e}")
+    except LookupError as e:  # nothing survived the Checker
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:  # upstream failed: no API key, rate limit, no themes
+        raise HTTPException(status_code=502, detail=str(e))

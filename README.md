@@ -230,7 +230,8 @@ curl -X POST http://localhost:8000/shops/analyse \
         "Good tea... Tasty maskabun."
       ],
       "reasoning": "All 12 mentions in the period specifically praise the chai and bun maska as the highlight of the cafe... indicating the single biggest strength right now.",
-      "next_step": "Continue preparing the Irani tea and bun maska exactly as they are — maintain the same recipes, sourcing and preparation methods."
+      "next_step": "Continue preparing the Irani tea and bun maska exactly as they are — maintain the same recipes, sourcing and preparation methods.",
+      "degraded": false
     }
   ]
 }
@@ -262,6 +263,7 @@ business's past runs (shops are keyed by name + location).
 | `themes[].samples` | string[] | 1–3 real quotes. Good for an expandable card |
 | `themes[].reasoning` | string | Why this score. A paragraph |
 | `themes[].next_step` | string | What to do. A paragraph |
+| `themes[].degraded` | bool | `true` = not a real score (Groq unavailable or an unusable reply); its `0` is a placeholder |
 
 `themes` comes back unsorted — sort by `score` in the client. Split at zero for
 a two-column "Fix these / Protect these" layout.
@@ -316,9 +318,11 @@ so filtering costs nothing; and the Scorer reads a *sample* to find themes, then
 matches locally.
 
 **If Groq's daily quota runs out**, the Analyst returns `score: 0` with
-`reasoning: "LLM unavailable, defaulted to neutral."` The HTTP call still
-succeeds with a `200`. The CLI flags these as `⚠ NOT A REAL SCORE` — a client
-should check for that reasoning string rather than render six confident zeros.
+`reasoning: "LLM unavailable, defaulted to neutral."` and `degraded: true`. The
+HTTP call still succeeds with a `200`. The CLI flags these as `⚠ NOT A REAL
+SCORE` — a client should check `degraded` rather than render six confident
+zeros. Degraded themes are never stored in Hindsight, so they can't resurface
+as a "past trend" on the next run.
 
 ---
 

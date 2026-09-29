@@ -29,23 +29,10 @@ from memory import HindsightMemory
 from scorer import extract_themes
 
 WIDTH = 78
-# analyst.py's fallback reasoning, emitted when Groq is unreachable or rate
-# limited. It arrives as a normal-looking score of 0, so the pipeline can't
-# tell you it failed -- catch it here and say so loudly instead.
-FALLBACK_MARKER = "LLM unavailable"
 
 
-_verbose = True
-
-
-def say(*args) -> None:
-    """Print only in CLI mode. api.py calls the same function with verbose=False."""
-    if _verbose:
-        print(*args)
-
-
-def rule(title: str = "") -> None:
-    say(f"\n{'─' * WIDTH}" if not title else f"\n── {title} " + "─" * max(0, WIDTH - len(title) - 4))
+def _quiet(*args) -> None:
+    pass
 
 
 def wrap(text: str, indent: str = "      ") -> str:
@@ -55,8 +42,14 @@ def wrap(text: str, indent: str = "      ") -> str:
 def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int = 200,
                  store: bool = True, run_number: int = 1, max_pages: int = MAX_PAGES,
                  months: int = 3, verbose: bool = True) -> dict:
-    global _verbose
-    _verbose = verbose
+    # Print only in CLI mode; api.py passes verbose=False. A local, not a
+    # module global: the API serves requests on a thread pool, so a global
+    # flag set by one request would silence or un-silence another.
+    say = print if verbose else _quiet
+
+    def rule(title: str = "") -> None:
+        say(f"\n{'─' * WIDTH}" if not title else f"\n── {title} " + "─" * max(0, WIDTH - len(title) - 4))
+
     say(f"\n{'=' * WIDTH}\n  {name} — {location}\n{'=' * WIDTH}")
 
     # 1. GATHER -------------------------------------------------------------
@@ -120,7 +113,9 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
         analyzed = analyze_week(themes, memory, business=business, period=period)
 
         for t in sorted(analyzed, key=lambda t: t["score"]):
-            flag = "  ⚠ NOT A REAL SCORE" if FALLBACK_MARKER in t["reasoning"] else ""
+            # degraded = Groq unavailable or an unusable reply: its 0 is a
+            # placeholder, so say so loudly instead of passing it off as neutral
+            flag = "  ⚠ NOT A REAL SCORE" if t["degraded"] else ""
             say(f"  {t['score']:+d}   {t['name']}   ({t['count']} mentions){flag}")
             say(wrap(f"why   {t['reasoning']}"))
             say(wrap(f"do    {t['next_step']}") + "\n")
@@ -130,15 +125,20 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
                   "themes": analyzed}
 
         rule("5/5  Storing for next time")
-        if store:
-            memory.store_week(run_number, result)
+        # keyed by day as well as run number: re-running today replaces
+        # today's memory, but API callers that leave run_number at its default
+        # of 1 still build up history across days instead of overwriting it
+        if store and memory.store_week(run_number, result,
+                                       run_key=f"run:{run_number}:{date.today().isoformat()}"):
             say(f"      stored   : run {run_number} -> bank {memory.bank_id!r}")
             say("      next run recalls this to spot trends ('worse than last time')")
+        elif store:
+            say("      skipped: no theme was really scored, nothing worth remembering")
         else:
             say("      skipped (--no-store)")
 
     # SUMMARY ---------------------------------------------------------------
-    degraded = [t for t in analyzed if FALLBACK_MARKER in t["reasoning"]]
+    degraded = [t for t in analyzed if t["degraded"]]
     real = [t for t in analyzed if t not in degraded]
     rule("SUMMARY")
     if real:
@@ -149,7 +149,7 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
         say(wrap(best["next_step"], "                   "))
     if degraded:
         say(f"\n      ⚠ {len(degraded)} of {len(analyzed)} themes could NOT be scored — Groq was "
-              f"unavailable or\n        rate limited. Those show +0 but are not real results.")
+              f"unavailable, rate\n        limited, or replied unusably. Those show +0 but are not real results.")
     say("")
     return result
 

@@ -4,6 +4,7 @@ Scorer. Input schema (from the Gatherer): id, source, date, rating, text."""
 
 import csv
 import re
+import unicodedata
 from collections import Counter
 
 MIN_WORDS = 4
@@ -15,7 +16,12 @@ MIN_REPEATS = 3
 
 
 def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", text.lower())).strip()
+    r"""Lowercase, drop punctuation and symbols, collapse whitespace. Removes by
+    Unicode category rather than [^\w\s]: \w excludes combining marks, so
+    Hindi/Telugu vowel signs were stripped ("खाना" -> "खन") and different
+    reviews could collapse into one "duplicate"."""
+    kept = "".join(c for c in text.lower() if unicodedata.category(c)[0] not in "PS")
+    return re.sub(r"\s+", " ", kept).strip()
 
 
 def _is_too_short(text: str) -> bool:
@@ -57,7 +63,11 @@ def check_reviews(reviews: list[dict]) -> tuple[list[dict], int, dict]:
     rejected_by_reason = Counter()
 
     for review in reviews:
-        text = review["text"]
+        text = review.get("text")
+        # NaN from a pandas read, None from a source: no text is nothing to verify
+        if not isinstance(text, str) or not text.strip():
+            rejected_by_reason["empty"] += 1
+            continue
         normalized = _normalize(text)
 
         if normalized in seen_normalized:

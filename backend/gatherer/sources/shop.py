@@ -20,6 +20,7 @@ Keys come from the env var, keys.csv, or an `api_key` in the source config.
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,14 +41,21 @@ SERPAPI_SORT = {"newest": "newestFirst", "relevant": "qualityScore",
                 "highest": "ratingHigh", "lowest": "ratingLow"}
 
 TIMEOUT = 30
+# Transient failures (timeouts, dropped connections, 429/5xx) get this many
+# retries with a short backoff before the request is given up on. 4xx other
+# than 429 (bad key, bad place id) never succeed on retry, so they fail at once.
+RETRIES = 2
 
 # Page 1 is always 8 results; SerpApi rejects `num` there but accepts up to 20
 # on later pages, so pages 2+ cost the same one search for twice the reviews.
 PAGE_SIZE = 20
 # Every page is one billable SerpApi search, and a shop whose reviews are mostly
 # star-only ratings can otherwise paginate a long way to reach `limit`. Stop
-# here regardless, so one run can't quietly eat a monthly quota.
-MAX_PAGES = 15
+# here regardless, so one run can't quietly eat a monthly quota. Sized for
+# analyse_shop's default of 400 text reviews: 8 + 20/page needs 21 pages even
+# if every review has text, and 30 covers shops where ~70% do. (15, the old cap,
+# topped out at 288 reviews.) A shop with fewer reviews stops early and pays less.
+MAX_PAGES = 30
 
 # SerpApi falls back to "a month ago" phrasing when a review has no iso_date.
 _RELATIVE = re.compile(r"(?:(\d+)|an?)\s+(minute|hour|day|week|month|year)s?\s+ago", re.I)
@@ -141,13 +149,25 @@ class ShopSource(Source):
             "User-Agent": "Mozilla/5.0", **({"Content-Type": "application/json"} if data else {}),
             **(headers or {}),
         })
-        try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-                return json.load(resp)
-        except urllib.error.HTTPError as e:
-            # both APIs put the useful part ("API key not valid", quota) in the body
-            detail = e.read().decode("utf-8", "replace")[:400]
-            raise RuntimeError(f"{e.code} from {urllib.parse.urlsplit(url).netloc}: {detail}") from e
+        host = urllib.parse.urlsplit(url).netloc
+        for attempt in range(RETRIES + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                    return json.load(resp)
+            except urllib.error.HTTPError as e:
+                # both APIs put the useful part ("API key not valid", quota) in the body
+                detail = e.read().decode("utf-8", "replace")[:400]
+                if (e.code == 429 or e.code >= 500) and attempt < RETRIES:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(f"{e.code} from {host}: {detail}") from e
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                if attempt < RETRIES:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(f"could not reach {host}: {getattr(e, 'reason', e)}") from e
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"{host} returned something that isn't JSON: {e}") from e
 
     def _serpapi_get(self, **params) -> dict:
         url = f"{SERPAPI}?" + urllib.parse.urlencode({"hl": self.language, **params})

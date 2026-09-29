@@ -11,12 +11,18 @@ theme, so 60-120s is normal. See README.md for how a mobile client should
 handle that.
 """
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+import logging
 
-from analyse_shop import analyse_shop
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
+
+from analyse_shop import DEFAULT_LIMIT, analyse_shop
+from errors import PipelineError
 from run_week import run_week
+
+log = logging.getLogger("feedback.api")
 
 app = FastAPI(
     title="Feedback Analyser API",
@@ -32,12 +38,36 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(PipelineError)
+def pipeline_error(request: Request, exc: PipelineError):
+    """Expected failures, one status each (see errors.py): 404 nothing to
+    analyse, 502 an upstream service failed (retriable), 503 server config."""
+    return JSONResponse(status_code=exc.status,
+                        content={"detail": str(exc), "error": type(exc).__name__})
+
+
+@app.exception_handler(Exception)
+def unexpected_error(request: Request, exc: Exception):
+    """A bug, not an expected failure. Answer in the same JSON shape as every
+    other error instead of a plain-text 500; the traceback still goes to the
+    server log."""
+    # exc_info explicitly: handlers run outside the except block, so
+    # log.exception() would log "NoneType: None" instead of the traceback
+    log.error("unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(status_code=500, content={
+        "detail": f"Internal error ({type(exc).__name__}). This is a bug; the server log has details.",
+        "error": "InternalError"})
+
+
 class ShopRequest(BaseModel):
-    name: str = Field(..., examples=["Niloufer Cafe"], description="Business name")
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(..., min_length=1, examples=["Niloufer Cafe"], description="Business name")
     location: str = Field("", examples=["Hitech City, Hyderabad"])
-    months: int = Field(3, ge=0, le=120,
-                        description="Only analyse reviews from the last N months; 0 = all time")
-    limit: int = Field(200, ge=1, le=1000, description="Max reviews with text to gather")
+    limit: int = Field(DEFAULT_LIMIT, ge=1, le=1000,
+                       description="Analyse the newest N reviews that have text")
+    months: int = Field(0, ge=0, le=120,
+                        description="Also skip reviews older than N months; 0 = no age limit")
     provider: str = Field("serpapi", pattern="^(serpapi|places)$",
                           description="serpapi = hundreds of reviews; places = Google's API, max 5")
     store: bool = Field(True, description="Write the result to Hindsight for trend recall")
@@ -57,14 +87,9 @@ def analyse(req: ShopRequest):
     Scrapes its public reviews, filters junk, groups the rest into themes, and
     scores each -5..+5 with reasoning and a recommended next step.
     """
-    try:
-        return analyse_shop(req.name, req.location, provider=req.provider, limit=req.limit,
-                            months=req.months, store=req.store, run_number=req.run_number,
-                            verbose=False)
-    except LookupError as e:  # nothing found, or nothing survived the Checker
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:  # upstream failed: no API key, provider error, rate limit
-        raise HTTPException(status_code=502, detail=str(e))
+    return analyse_shop(req.name, req.location, provider=req.provider, limit=req.limit,
+                        months=req.months, store=req.store, run_number=req.run_number,
+                        verbose=False)
 
 
 @app.post("/weeks/{week_number}/run")
@@ -73,11 +98,4 @@ def run(week_number: int, business: str | None = None):
     reviews and returns the result the dashboard renders: rejected count, themes,
     scores, reasoning, next steps. `business` defaults to the one in
     gatherer_config.json; competitor (market) reviews are never mixed in."""
-    try:
-        return run_week(week_number, business)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"No data found for week {week_number}: {e}")
-    except LookupError as e:  # nothing survived the Checker
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:  # upstream failed: no API key, rate limit, no themes
-        raise HTTPException(status_code=502, detail=str(e))
+    return run_week(week_number, business)

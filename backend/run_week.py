@@ -21,6 +21,7 @@ import pandas as pd
 
 from analyst import analyze_week
 from checker import check_reviews
+from errors import NothingToAnalyse, PipelineError, UpstreamError
 from gatherer.gatherer import DEFAULT_OUT, load as load_gathered
 from gatherer.schema import OWN
 from memory import HindsightMemory
@@ -35,12 +36,16 @@ def default_business() -> str:
 
 
 def _own_reviews(business: str) -> pd.DataFrame:
-    df = load_gathered(DEFAULT_OUT, origin=OWN)
-    df = df[(df["business"] == business) & (df["week"] != "")]
+    try:
+        all_own = load_gathered(DEFAULT_OUT, origin=OWN)
+    except FileNotFoundError:
+        raise NothingToAnalyse(f"nothing gathered yet ({DEFAULT_OUT} doesn't exist); "
+                               f"run `python -m gatherer --config gatherer_config.json` first") from None
+    df = all_own[(all_own["business"] == business) & (all_own["week"] != "")]
     if df.empty:
-        known = sorted(load_gathered(DEFAULT_OUT, origin=OWN)["business"].unique())
-        raise FileNotFoundError(f"no dated reviews for business {business!r}; "
-                                f"gathered businesses: {known}")
+        known = sorted(all_own["business"].unique())
+        raise NothingToAnalyse(f"no dated reviews for business {business!r}; "
+                               f"gathered businesses: {known}")
     return df
 
 
@@ -55,8 +60,8 @@ def gather_week(week_number: int, business: str) -> list[dict]:
     df = _own_reviews(business)
     weeks = sorted(df["week"].unique())
     if not (1 <= week_number <= len(weeks)):
-        raise FileNotFoundError(f"week {week_number} out of range for {business!r} "
-                                f"(1..{len(weeks)} available)")
+        raise NothingToAnalyse(f"week {week_number} out of range for {business!r} "
+                               f"(1..{len(weeks)} available)")
     return df[df["week"] == weeks[week_number - 1]].to_dict("records")
 
 
@@ -68,12 +73,12 @@ def run_week(week_number: int, business: str | None = None) -> dict:
 
     verified, rejected_count, rejected_by_reason = check_reviews(raw_reviews)
     if not verified:
-        raise LookupError(f"all {len(raw_reviews)} reviews for {business!r} week {week_number} "
-                          f"were rejected by the Checker ({rejected_by_reason})")
+        raise NothingToAnalyse(f"all {len(raw_reviews)} reviews for {business!r} week {week_number} "
+                               f"were rejected by the Checker ({rejected_by_reason})")
     themes = extract_themes(verified, rejected_count)
     if not themes:
         # empty is ambiguous (see analyse_shop.py) -- never store it as a real week
-        raise RuntimeError(f"the Scorer found no themes in {len(verified)} verified reviews; "
+        raise UpstreamError(f"the Scorer found no themes in {len(verified)} verified reviews; "
                            f"usually means the Groq call failed or hit a rate limit")
 
     with HindsightMemory(business) as memory:
@@ -86,9 +91,17 @@ def run_week(week_number: int, business: str | None = None) -> dict:
             "rejected_count": rejected_count,
             "rejected_by_reason": rejected_by_reason,
             "themes": analyzed_themes,
+            "warnings": [],
         }
         memory.store_week(week_number, week_result,
                           timestamp=datetime.fromisoformat(dates[0]).replace(tzinfo=timezone.utc))
+        if memory.error:  # memory is optional: say so, but keep the result
+            week_result["warnings"].append(f"{memory.error}; scored without past-week trends "
+                                           f"and not stored.")
+        degraded = sum(t["degraded"] for t in analyzed_themes)
+        if degraded:
+            week_result["warnings"].append(f"{degraded} of {len(analyzed_themes)} themes could not "
+                                           f"be scored; see themes[].degraded.")
 
     return week_result
 
@@ -106,7 +119,12 @@ if __name__ == "__main__":
     args = ap.parse_args()
     business = args.business or default_business()
 
-    if args.weeks:
-        print("\n".join(f"{i}: {w}" for i, w in enumerate(_available_weeks(business), 1)))
-        sys.exit()
-    print(json.dumps(run_week(args.week, business), indent=2))
+    try:
+        if args.weeks:
+            print("\n".join(f"{i}: {w}" for i, w in enumerate(_available_weeks(business), 1)))
+            sys.exit()
+        print(json.dumps(run_week(args.week, business), indent=2))
+    except PipelineError as e:
+        sys.exit(f"\n  {e}\n")
+    except KeyboardInterrupt:
+        sys.exit("\n  Cancelled.\n")

@@ -83,9 +83,9 @@ def analyse_shop(name: str, location: str, provider: str = "serpapi", limit: int
         stars = "".join(f"  {s}★ {(rated == s).sum()}" for s in (5, 4, 3, 2, 1))
         say(f"      ratings  : avg {rated.mean():.2f}{stars}")
     say(f"      saved    : {DEFAULT_OUT}  ({len(full)} rows in the database)")
-    if source.pages_fetched:
+    if source.searches_used:
         capped = " (page cap hit — raise --max-pages for more)" if source.pages_fetched >= max_pages else ""
-        say(f"      cost     : {source.pages_fetched} billable SerpApi searches{capped}")
+        say(f"      cost     : {source.searches_used} billable SerpApi searches{capped}")
 
     # 2. CHECK --------------------------------------------------------------
     rule("2/5  Checking (filtering spam, duplicates, gibberish)")

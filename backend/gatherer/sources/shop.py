@@ -107,7 +107,8 @@ class ShopSource(Source):
         self.place_id = place_id
         self.max_pages = max_pages
         self.since = since
-        self.pages_fetched = 0  # billable searches used, for the caller to report
+        self.pages_fetched = 0  # review PAGES fetched -- gates the max_pages loop below, nothing else
+        self.searches_used = 0  # ALL billable SerpApi searches (lookup + pages) -- for cost reporting
 
     @property
     def query(self) -> str:
@@ -213,6 +214,7 @@ class ShopSource(Source):
         data_id = self.place_id
         if not data_id:
             found = self._serpapi_get(engine="google_maps", type="search", q=self.query, api_key=key)
+            self.searches_used += 1  # billable, but must NOT gate the max_pages loop below
             place = found.get("place_results") or (found.get("local_results") or [{}])[0]
             data_id = place.get("data_id")
             if not data_id:
@@ -234,6 +236,7 @@ class ShopSource(Source):
                 params["num"] = PAGE_SIZE
             page = self._serpapi_get(**params)
             self.pages_fetched += 1
+            self.searches_used += 1
 
             reviews = page.get("reviews") or []
             if not reviews:

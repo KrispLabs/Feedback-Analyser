@@ -506,6 +506,45 @@ were nearly out of quota to test a fix against), but flagged: if this matters fo
 `extract_themes`/`call_llm` should surface a distinguishable "temporarily unavailable"
 state rather than a silently-empty one.
 
+## Shop Gatherer merged from main; SerpApi cost-reporting bug found and fixed
+
+Pulled `main` into `Chaitanya` (fast-forward, no conflicts) — it now includes a whole new
+flow built on top of our work: `backend/analyse_shop.py` + `backend/gatherer/sources/shop.py`
+resolve a business by name + location, live-scrape its Google Maps reviews via SerpApi (or
+Google Places), and run it through the same Checker/Scorer/Analyst/Memory stages. New API
+endpoint `POST /shops/analyse`, a thorough `README.md`, and a `HINDSIGHT_BANK_ID` env var in
+`memory.py` that generalizes the per-experiment bank pattern we'd been doing manually.
+`analyst.py`'s prompt was also generalized to stop assuming "app feedback" now that the
+business can be a cafe, shop, or telecom.
+
+**Debugged from the start given a tight SerpApi budget (told: stay under 100 credits,
+some already spent).** Zero-cost first: syntax-compiled and imported every backend module
+(all clean), unit-tested `shop.py`'s pure logic (`parse_relative_date`, `query`, validation)
+with no API calls. Only then one minimal live test — `ShopSource` in isolation (not the
+full pipeline, to avoid also spending Groq quota), `max_pages=1`, real business ("Niloufer
+Cafe", "Hitech City").
+
+**Bug found: `pages_fetched` undercounts real SerpApi cost by exactly 1 search, every run.**
+The live test used 2 actual SerpApi searches (1 to resolve the business to a place, 1 to
+fetch the review page), confirmed by request logging, but `source.pages_fetched` reported
+only 1 — the initial place-lookup call was never counted. `analyse_shop.py` shows this
+number to the user as `cost : N billable SerpApi searches`, so **every run's true cost was
+silently underreported by 1 credit** — the kind of bug that quietly erodes trust in a
+credit counter someone is watching closely.
+
+Fix required care: `pages_fetched` isn't just a display number, it also gates the
+pagination loop (`while ... self.pages_fetched < self.max_pages`). Naively incrementing it
+for the lookup too would mean `max_pages=1` fetches **zero** review pages instead of one,
+since the lookup would consume the whole budget — a worse bug than the one being fixed.
+Solution: split the two concerns. `pages_fetched` stays review-pages-only (preserves the
+pagination cap's intended meaning), and a new `searches_used` counts every billable call
+(lookup + pages) for accurate cost reporting. `analyse_shop.py` now reports `searches_used`.
+Verified with a mocked test (zero API cost): `max_pages=1` still yields exactly 1 review
+page, while `searches_used` now correctly reports 2.
+
+**Total SerpApi spend this session: 2 credits** (the one live test above; the mocked
+verification cost nothing).
+
 ## Critical Checker bug found on real data (fixed)
 
 Running the Checker on the first 300 real reviews rejected **all 300** as "gibberish" —
